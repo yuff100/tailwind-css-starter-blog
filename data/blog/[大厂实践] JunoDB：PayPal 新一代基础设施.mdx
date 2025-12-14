@@ -1,0 +1,93 @@
+---
+title: '[大厂实践] JunoDB：PayPal 新一代基础设施'
+date: '2025-11-26'
+lastmod: '2025-11-26'
+tags: ['大厂实践', '数据库', '架构']
+draft: false
+summary: '本文介绍了 PayPal 开源的新一代高性能分布式键值存储系统 JunoDB，分析了其设计背景和架构。'
+images: ['/static/images/canada/mountains.jpg', '/static/images/canada/toronto.jpg']
+authors: ['default']
+---
+
+> 本文介绍了 PayPal 开源的新一代高性能分布式键值存储系统 JunoDB，分析了其设计背景和架构。
+
+# 1. 引言
+
+JunoDB 是由 [PayPal](https://www.infoq.com/news/2023/06/paypal-junodb-kv-store "PayPal JunoDB KV Store") 开发并开源的专有分布式 KV 存储，旨在满足 PayPal 全球支付平台的极端需求，每天处理约 3500 亿次请求。JunoDB 设计为高可用性、安全性和可扩展性，保持六个九的可用性（99.9999%），意味着每年[停机时间少于 32 秒](https://newsletter.systemdesigncodex.com/p/how-paypal-built-junodb "How PayPal Built JunoDB")。作为 PayPal 核心基础组件，几乎为所有后端服务，包括用户登录、风险分析到最终交易处理。
+
+# 2. 背景与动机
+
+PayPal 决定打造自定义数据库，是因为现有解决方案（如 Redis）在满足特定需求方面存在局限性。Redis 是强大的内存存储，只受限于内存，但本质上是单线程的，原生无法利用多 CPU 核心。
+
+PayPal 不断演变的需求要求支持 CPU 密集型功能，如数据加密和其他复杂计算，需要[系统只受限于 CPU，而不是内存](https://blog.bytebytego.com/p/how-paypal-serves-350-billion-daily "How PayPal Serves 350 Billion Daily")。因此，JunoDB 从最初原型 —— 一个用于短期内存数据的单线程 C++ 程序 —— 转变为一个高度并发、多核友好的系统。这一演变包括用 Golang 全面重写，以及支持持久化存储和长期数据的转变。
+
+# 3. 架构概述
+
+JunoDB 采用三层代理架构，将客户端应用与物理存储服务器分离，在可扩展性、连接管理和运维效率方面具有显著优势。客户端请求首先被路由到无状态代理层，然后代理层与相应存储服务器通信以执行操作。
+
+![](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/824cd0e69cb1480cb2bb508fbc69b5d1~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766232568&x-orig-sign=Jjp%2FX5oNh7359tvWl0aBvRPXAQE%3D)
+
+该架构由三个主要组件组成：JunoDB 客户端库、JunoDB 代理和 JunoDB 存储服务器。
+
+# 4. 核心组件
+
+#### JunoDB 客户端库
+
+该库嵌入在客户端应用程序中，提供简单数据存储和检索 API。为促进 PayPal 多样化技术栈的广泛采用，该库已用 Java、Go、C++、Node.js 和 Python 实现。客户端负责与 JunoDB 代理层通信。
+
+#### JunoDB 代理
+
+代理层是关键组件，既无状态又可横向扩展，主要职能包括：
+
+*   **连接池**：保持与所有存储服务器的持久化连接，随着应用服务扩展，减少数据库层的连接开销。
+*   **请求路由**：使用一致性哈希确定哪个存储分片应处理某个键。代理层会参考分片映射以路由相应请求。
+*   **配置管理**：代理使用 etcd（分布式键值存储）来存储和管理分片映射数据，允许对集群拓扑进行动态更新。
+
+为了防止代理本身成为单点故障，多个代理实例会在负载均衡器后运行。
+
+#### JunoDB 存储服务器
+
+这是物理存储的有状态层。存储服务器接受代理的请求并执行 CRUD（创建、读取、更新、删除）操作。底层存储引擎是 RocksDB，这是 Facebook 开发的高性能嵌入式键值存储，采用日志结构化合并树（LSM Tree）数据结构，实现了极高的写入吞吐量，并支持内存存储和持久化磁盘存储。
+
+# 5. 可扩展性方法
+
+JunoDB 设计时在连接层和数据层均实现横向扩展。
+
+*   **连接扩展**：随着应用客户端数量的增加，无状态代理层可以通过添加更多代理实例来扩展，使 JunoDB 能够处理大量进站连接而不降低性能。
+*   **数据扩展**：数据被划分为固定数量的 1024 个分片，基于一致性哈希将键映射到分片。算法确保在添加或移除存储节点时，只需重新映射最小数量的键，从而极大简化了集群扩展和数据重新分配的工作。
+
+# 6. 一致性与可用性机制
+
+实现六个九的可用性需要强有力的容错和数据一致性策略。
+
+*   **高可用性**：JunoDB 通过积极复制（aggressive replication）实现这一点。存储节点被组织成多个物理位置或“区域”的逻辑组。节点故障时，系统提供自动且瞬时的故障切换，无需复杂的领导人重选流程或数据重分配。代理检查连接失效或超时，无缝的向另一个副本重试请求。
+*   **数据一致性**：在数据中心内，JunoDB 采用基于定额的协议（quorum-based protocol）实现同步复制，确保强一致性。要使读写操作成功，必须在大多数副本之间达成共识。规则是 `Write Quorum (W) + Read Quorum (R) > Number of Replicas (N)`。典型的 PayPal 生产环境配置使用 5 个区域（N=5），写 Quorum 为 3，读 Quorum 为 3，确保每次读取始终看到最新提交的写入数据。跨数据中心复制异步进行，以确保灾难恢复而不影响主集群延迟。
+
+![](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/8ecf9be5f4744ec6afe1212fa98d4971~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766232568&x-orig-sign=FqCfSBKpWnhU2Ay5kBJSBolVtDk%3D)
+
+# 7. 安全特性
+
+作为全球支付处理商的核心组件，安全性是 JunoDB 最重要的设计原则，它提供端到端数据保护：
+
+*   **数据传输**：客户端、代理和存储服务器之间的所有通信默认采用 TLS 加密保护。
+*   **静态数据**：磁盘上存储的所有数据均加密以防止未经授权访问。
+*   **密钥管理**：专用密钥管理模块负责证书和加密密钥的生命周期，以便密钥自动轮换和安全分发。
+
+![](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/4cf881109d0446fa8284b3c8b0860007~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766232568&x-orig-sign=5siZAxue8h2IZW%2BF8yHZDCIkh0A%3D)
+
+# 8. PayPal 使用案例
+
+JunoDB 结合了性能、可扩展性和可用性，使其适用于 PayPal 的多个应用：
+
+*   **分布式缓存**：用作高度可靠的缓存，用于存储频繁访问但变化不频繁的数据，如用户偏好、账户详情和 API 响应，支持短期（秒）和长期（天）TTL。
+*   **幂等性**：为防止支付等关键操作被重复处理，JunoDB 用于存储交易 ID。其高可用性确保重试时可以安全的检查操作是否已处理，避免双花等错误。
+*   **分布式计数器**：作为中央存储，用于跟踪资源使用情况，例如 API 速率限制或用户认证尝试次数等。
+*   **延迟桥接**：对于像 Oracle 这样以双主配置运行的遗留数据库系统，地理复制可能较慢。JunoDB 作为快速复制中介，将数据同时写入 Oracle 和 JunoDB。故障发生时，应用程序可以读取来自二级数据中心 JunoDB 的最新数据，从而弥补主数据库的复制延迟。
+
+# 9. 开源之旅
+
+2023 年，PayPal 以宽松的 Apache 2.0 许可证，在 [GitHub](https://github.com/paypal/junodb "JunoDB GitHub") 上将 JunoDB 作为开源项目发布。目标是与更广泛的社区分享技术，促进进一步发展。服务器采用 Golang 编写，利用该语言对并发的强力支持。在发布时，项目路线图包括为 Kubernetes 开发 JunoDB operator 及额外客户端库的计划。
+
+# 10. 结论
+
+JunoDB 是目标导向设计工程的有力证明。通过识别现成解决方案无法满足的具体需求 —— 即高并发、高 CPU 负载且可大规模扩展的键值存储 —— PayPal 打造了支撑其全球运营的基础设施。其架构在可扩展性、高可用性、强一致性和安全性之间取得了深思熟虑的平衡，为构建大规模分布式系统的工程师提供了宝贵的案例研究。

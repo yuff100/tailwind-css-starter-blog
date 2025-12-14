@@ -1,0 +1,178 @@
+---
+title: 'AI 原生测试自动化'
+date: '2025-11-24'
+tags: ['测试', '人工智能']
+draft: false
+summary: '本文介绍了如何基于开源框架并结合 LLM 构建 AI 代理驱动的自动化测试框架，从而实现更具弹性的自动化测试套件。'
+---
+
+> *本文介绍了如何基于开源框架并结合 LLM 构建 AI 代理驱动的自动化测试框架，从而实现更具弹性的自动化测试套件。原文：[AI-Native Test Automation is Here](https://medium.com/google-cloud/ai-native-test-automation-is-here-5b096ac12851)*
+
+![](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/cd6e8f1d304e4e0fb24e1edb3527ccaa~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766232886&x-orig-sign=PXp0qKAMh7pYslsf8QUonAxJAtQ%3D)
+
+端到端测试是确保软件质量的最佳实践，但对许多开发者来说仍是痛点。传统框架常常导致测试套件脆弱、维护成本高昂。由于依赖特定选择器，比如 CSS ID，这些选择器在最小的重构中都可能崩溃，从而导致测试不稳定、开发周期缓慢，需要不断追赶开发进度。
+
+本文深入探讨了构建 AI 代理驱动的现代且具弹性的测试框架，介绍实现这一目标的三个开源组件：`browser-use`、`pytest` 和 Allure Report，以及如何将这些方案构建成统一解决方案，该方案被称为 [AgentiTest](https://github.com/kweinmeister/agentitest)。
+
+# Browser Use: AI 赋能驱动
+
+解决方案的核心是 [browser-use](https://github.com/browser-use/browser-use)，这是一个 Python 库，使 AI 代理能控制网页浏览器，是将人类语言转化为机器动作的引擎。
+
+browser-use 协调大语言模型与 [Playwright](https://playwright.dev) 控制的浏览器之间的交互，其运作核心是一个 [ReAct（推理与动作）](https://react-lm.github.io) 循环：
+
+1.  **检查（Observe）**：代理检查当前网页，将其 DOM 简化为干净且可操作的访问树，为所有交互元素提供结构化视图。
+2.  **推理（Reason）**：将这个简化视图连同高层任务（例如，“找到搜索栏，输入'Vertex AI'，然后按回车”）一起发送给 LLM。LLM 分析上下文，决定下一步执行的最佳动作。
+3.  **行动（Act）**：代理使用其底层 Playwright 驱动执行 LLM 返回的命令（例如：type\_into\_element(index=5, text='Vertex AI')）。
+
+这个循环会持续进行，直到代理确认原始任务已完成。browser-use 的一个关键功能是其状态管理。 [代理历史](https://docs.browser-use.com/customize/agent-settings#agent-history)会追踪每一个动作、LLM 的思考过程、访问的网址和截图，提供将在后续报告中使用的审计轨迹。
+
+![](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/a9ec053027124f08af6a8bdfc06297cd~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766232886&x-orig-sign=USu0tMHylh2%2FWXLaI1yGKzc8WVY%3D)
+
+#### 工作原理
+
+`browser-use` 允许定义代理，赋予其任务，并用几行代码运行：
+
+```python
+import asyncio
+from browser_use import Agent
+from browser_use.llm import ChatGoogle
+
+async def main():
+    # 通过 task 和 LLM 定义代理
+    agent = Agent(
+        task="Go to wikipedia.org and search for the 'Roman Empire'",
+        llm=ChatGoogle(model="gemini-2.5-pro"),
+    )
+    # 执行代理，等待结果
+    result = await agent.run()
+    print(result.final_result())
+
+asyncio.run(main())
+```
+
+# pytest：结构化测试运行器
+
+`browser-use` 负责浏览器交互， 而 [pytest](https://docs.pytest.org/en/stable) 则为测试提供结构、组织和执行引擎。
+
+#### 一个简单的 pytest 示例
+
+如果你有一个名为 `test_example.py` 的文件，pytest 会自动发现并运行其中的测试函数。
+
+```python
+# test_example.py 内容
+def test_always_passes():
+    assert 1 == 1
+```
+
+以用这个命令从终端运行：`pytest`
+
+![](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/bbbf1c4aed1f4455a609f3afd862552d~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766232886&x-orig-sign=Mrc1XXZlhk%2B%2Bt4QlYL26ZWd94cU%3D)
+
+#### pytest 关键概念
+
+1.  **固定功能（Fixtures）**：固定功能是设置（setup）/拆卸（teardown）函数，为 [conftest.py](https://docs.pytest.org/en/stable/how-to/fixtures.html#conftest-py-sharing-fixtures-across-multiple-files) 里的测试提供一致的基线：
+
+*   `llm()`：函数范围的固定功能，在整个测试运行中初始化一次 `ChatGoogle` 模型。
+*   `browser_session()`：函数范围的固定功能，为每个测试创建新的、隔离的浏览器会话，确保测试之间不会相互干扰。
+
+2.  **依赖注入**：pytest 会自动将固定功能的输出提供给任何将它们列为参数的测试函数，大大简化了测试设置。
+
+```python
+# conftest.py
+@pytest.fixture(scope="session")
+def llm() -> ChatGoogle:
+    # ... 初始化逻辑 ...
+    return ChatGoogle(model=model_name)
+
+# test_community_website.py
+async def test_search_for_term(self, llm, browser_session, term):
+    # llm 和 browser_session 由 pytest 自动提供
+    ...
+```
+
+3.  **参数化**：为避免重复编写代码，我们用[标记器（marker）](https://docs.pytest.org/en/stable/how-to/parametrize.html)运行一个带有多组输入的单一测试函数。这非常适合数据驱动场景，比如用单一测试定义测试四个不同链路的导航。
+
+```python
+# test_community_website.py
+@pytest.mark.parametrize(
+    "link_text, expected_path_segment",
+    [
+        ("Google Workspace", "google-workspace"),
+        ("AppSheet", "appsheet"),
+        # ... 更多参数 ...
+    ],
+)
+async def test_main_navigation(self, llm, browser_session, link_text, expected_path_segment):
+    # 此测试将针对上述列表中的每个元组分别运行一次
+    ...
+```
+
+# Allure Report: 讲故事的人
+
+测试运行的质量取决于报告。[Allure Report](https://allurereport.org) 将原始的成功/失败输出转化为交互式 HTML 仪表盘，讲述执行过程中发生的完整故事。
+
+pytest 和 Allure 通过 [allure-pytest](https://pypi.org/project/allure-pytest) 插件实现连接。运行 pytest 时，这个插件会作为监听器，连接到 pytest 的执行生命周期，拦截测试事件（如测试的开始和结束），并解释 Allure 装饰器和函数调用。
+
+对于每个事件和附件，Allure 会在 `--alluredir` 命令行选项指定的目录中生成对应的 JSON 或附件文件。这个原始结果文件文件夹是 Allure 命令行工具用来生成最终精致的 HTML 报告的通用数据格式。
+
+![](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/0f2e6e32c2d04cb08226c95896778c46~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766232886&x-orig-sign=11gp%2FYSfG5NtmSId6iY8vQeHmtU%3D)
+
+Allure 的功能使我们能够结构化并丰富本报告：
+
+**装饰组织大师**：[用 Allure 装饰、组织 pytest 报告](https://allurereport.org/docs/pytest)：
+
+*   `@allure.feature("Search Functionality")`：创建高层次分组。
+*   `@allure.story("Searching for Terms""")`：定义该功能中的用户故事。
+*   `@allure.title("Search for '{term}'")`： 为每个参数化测试用例设置动态标题。
+
+**结果附件**：报告中包含中间和最终输出，功能如下：
+
+*   `allure.step()`：上下文管理器，将一组动作分组为报告中的可折叠步骤。
+*   `allure.attach()`：将富数据（如文本、截图和网址）附加到当前步骤。
+
+**环境上下文**：Allure 会在其结果目录中查找命名 `environment.properties` 的文件。pytest 固定功能会自动生成该文件，它会在报告中填充上下文，比如操作系统、浏览器版本和运行时使用的 LLM。
+
+# AgentiTest 架构
+
+刚刚介绍的每个组件都可以集成到端到端架构中：
+
+![](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/917591f8e91f4a759ce4715015231583~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766232886&x-orig-sign=fd0sqORfsFig79OkGHO%2Fl2KEsCM%3D)
+
+#### 测试启动与编排（pytest）
+
+整个流程从开发者开始，他用自然语言编写测试并执行 `pytest` 命令。该命令激活 pytest 框架，作为中央编排器，其首要任务是查阅 `conftest.py` 文件，为诸如 Gemini LLM 实例和浏览器会话等工具做好准备，这些固定功能随后将对所有测试开放。每个测试都提供自然语言任务和预期输出。
+
+#### 代理执行循环（brower-use）
+
+浏览器代理类接管控制，检查网页当前状态并将完整上下文发送给 Gemini 模型。Gemini 处理上下文并返回特定命令，例如 `click(selector='text="AppSheet"')`。
+
+接着，代理使用 Playwright 执行命令，从而改变目标网站状态。整个反馈循环持续进行，代理观察新状态并将其发送回 LLM 以确定下一步作，直到整个任务完成。
+
+#### 报告与可视化（Allure）
+
+与执行循环并行运行的报告流水线是静默运行的。`allure-pytest` 插件连接 pytest 的执行生命周期，监听测试事件和 Allure 特定命令。
+
+每当代理执行一步，自定义 `record_step` 钩子都会捕捉上下文，包括代理的内部“想法”、当前网址和截图，然后用 `allure.attach()` 来报告这些信息。
+
+测试结束后，`allure serve` 命令处理测试工件并渲染 HTML 报告。
+
+# 谷歌云社区测试案例
+
+为观察这些概念如何转化为现实场景，AgentiTest 仓库包含示例测试文件 `test_community_website.py`，该套件测试[谷歌云社区](https://www.googlecloudcommunity.com/)官网，这是个允许用户、合作伙伴和谷歌员工提问并协作的公开论坛。
+
+![](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/88a9b871447e4edfbe0e6c9ad5514fe1~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766232886&x-orig-sign=BrlDSMQbMOminoVOUMo9Y46O8EA%3D)
+
+这些示例测试旨在验证面向用户的功能，对非技术利益相关者来说直观易懂。测试套件检查两个主要区域：
+
+*   **主页内容**：代理通过点击每个主要导航链接（如“Google Workspace”）验证导航，成功引导用户进入正确的对应页面。然后确认会员、在线用户和解决方案的关键社区统计数据都在页面上可见。
+*   **搜索功能**：代理会搜索像“BigQuery”这样的已知词，并验证其是否被带到搜索结果页面。为了测试非法路径，代理会寻找随机且无意义的字符串，确认网站正确显示“无结果”信息。
+
+# 如何开始
+
+总体而言，该自动化测试框架效果远超各部分之和，基于代理的方法让我们比以往任何时候都更具韧性，所有这些都建立在流行的开源测试工具之上，能够轻松集成到 DevOps 工作流中。
+
+准备好开始了吗？
+
+*   **探索 AgentiTest 框架**：克隆源代码，运行测试，并适配自己的项目。
+*   **查看谷歌云社区**：看看演示中使用的网站 ，想象一下如何用自然语言编写测试。
+*   **从 Google Cloud 和 Gemini 开始**：该项目由谷歌 Gemini 模型驱动。要获得 API 密钥并开始尝试，可以先从 Google Cloud 免费套餐开始，该套餐提供免费积分，方便探索各种服务。

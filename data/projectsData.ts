@@ -7,20 +7,16 @@ interface Project {
 
 const projectsData: Project[] = [
   {
-    title: 'A Search Engine',
-    description: `What if you could look up any information in the world? Webpages, images, videos
-    and more. Google has many features to help you find exactly what you're looking
-    for.`,
-    imgSrc: '/static/images/google.png',
-    href: 'https://www.google.com',
+    title: 'AI 职能厨师',
+    description: '接入 AI 大模型的职能厨师，提供智能化的烹饪建议和食谱推荐。',
+    imgSrc: '/static/images/ai-chef.png',
+    href: 'https://ai-chef.deepnomind.com/',
   },
   {
-    title: 'The Time Machine',
-    description: `Imagine being able to travel back in time or to the future. Simple turn the knob
-    to the desired date and press "Go". No more worrying about lost keys or
-    forgotten headphones with this simple yet affordable solution.`,
-    imgSrc: '/static/images/time-machine.jpg',
-    href: '/blog/the-time-machine',
+    title: 'AI Draw IO',
+    description: '基于 AI 的 Draw IO 图形编辑器，支持智能图形生成和编辑。',
+    imgSrc: '/static/images/ai-drawio.png',
+    href: 'https://ai-drawio.deepnomind.com/',
   },
 ]
 
