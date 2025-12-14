@@ -97,7 +97,7 @@ export default function ListLayoutWithTags({
                   href={`/blog`}
                   className="hover:text-primary-500 dark:hover:text-primary-500 font-bold text-gray-700 uppercase dark:text-gray-300"
                 >
-                  All Posts
+                  全部文章
                 </Link>
               )}
               <ul>
