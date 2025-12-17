@@ -48,6 +48,21 @@
   --z-80: 80;
 }
 
+/* Disqus compatibility fix: provide RGB fallback for oklch colors */
+#disqus_thread {
+  --color-gray-50: rgb(251, 251, 251);
+  --color-gray-100: rgb(246, 246, 246);
+  --color-gray-200: rgb(235, 235, 237);
+  --color-gray-300: rgb(218, 220, 224);
+  --color-gray-400: rgb(167, 173, 183);
+  --color-gray-500: rgb(113, 124, 139);
+  --color-gray-600: rgb(72, 83, 99);
+  --color-gray-700: rgb(55, 65, 81);
+  --color-gray-800: rgb(31, 41, 55);
+  --color-gray-900: rgb(17, 24, 39);
+  --color-gray-950: rgb(10, 14, 23);
+}
+
 /*
   The default border color has changed to `currentColor` in Tailwind CSS v4,
   so we've added these compatibility styles to make sure everything still
@@ -172,4 +187,19 @@ input:-webkit-autofill:focus {
 .linkicon {
   display: inline-block;
   vertical-align: middle;
+}
+
+/* Override oklch colors with RGB for Disqus compatibility */
+:root {
+  --color-gray-50: rgb(249, 250, 251);
+  --color-gray-100: rgb(243, 244, 246);
+  --color-gray-200: rgb(229, 231, 235);
+  --color-gray-300: rgb(209, 213, 219);
+  --color-gray-400: rgb(156, 163, 175);
+  --color-gray-500: rgb(107, 114, 128);
+  --color-gray-600: rgb(75, 85, 99);
+  --color-gray-700: rgb(55, 65, 81);
+  --color-gray-800: rgb(31, 41, 55);
+  --color-gray-900: rgb(17, 24, 39);
+  --color-gray-950: rgb(3, 7, 18);
 }
