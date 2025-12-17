@@ -1,19 +1,11 @@
 'use client'
 
 import { Comments as CommentsComponent } from 'pliny/comments'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import siteMetadata from '@/data/siteMetadata'
 
 export default function Comments({ slug }: { slug: string }) {
   const [loadComments, setLoadComments] = useState(true)
-
-  // 调试：打印配置
-  useEffect(() => {
-    console.log('Comments Config:', {
-      provider: siteMetadata.comments?.provider,
-      disqusConfig: siteMetadata.comments?.disqusConfig,
-    })
-  }, [])
 
   if (!siteMetadata.comments?.provider) {
     return null
