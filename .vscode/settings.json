@@ -1,4 +1,6 @@
 {
   "typescript.tsdk": "node_modules/typescript/lib",
-  "typescript.enablePromptUseWorkspaceTsdk": true
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "mdx-preview.preview.useWhiteBackground": true,
+  "mdx-preview.preview.useVscodeMarkdownStyles": false
 }

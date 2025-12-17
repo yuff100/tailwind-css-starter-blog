@@ -30,13 +30,24 @@ export const generateStaticParams = async () => {
   const tagCounts = tagData as Record<string, number>
   const tagKeys = Object.keys(tagCounts)
   return tagKeys.map((tag) => ({
-    tag: encodeURI(tag),
+    tag,
   }))
 }
 
 export default async function TagPage(props: { params: Promise<{ tag: string }> }) {
   const params = await props.params
-  const tag = decodeURI(params.tag)
+  // Safely decode the tag parameter - try decoding, but if it fails, use as-is
+  let tag = params.tag
+  try {
+    // If the tag is still URL-encoded, decode it
+    if (tag.includes('%')) {
+      tag = decodeURIComponent(tag)
+    }
+  } catch (e) {
+    // If decoding fails, use the original value
+    console.error('Error decoding tag:', e)
+  }
+
   const title = tag[0].toUpperCase() + tag.split(' ').join('-').slice(1)
   const filteredPosts = allCoreContent(
     sortPosts(allBlogs.filter((post) => post.tags && post.tags.map((t) => slug(t)).includes(tag)))
