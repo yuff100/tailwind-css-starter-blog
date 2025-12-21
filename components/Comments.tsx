@@ -13,9 +13,12 @@ export default function Comments({ slug }: { slug: string }) {
   if (!siteMetadata.comments?.provider) {
     return null
   }
+  
+  const provider = siteMetadata.comments?.provider as string
+  
   return (
     <div>
-      {loadComments && siteMetadata.comments?.provider === 'waline' ? (
+      {loadComments && provider === 'waline' ? (
         <Waline serverURL={siteMetadata.comments.walineConfig?.serverURL} />
       ) : (
         loadComments && (
