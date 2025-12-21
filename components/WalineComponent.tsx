@@ -5,7 +5,7 @@ import '@waline/client/style'
 import { useEffect, useRef } from 'react'
 
 interface WalineProps {
-  serverURL: string
+  serverURL?: string
   path?: string
   lang?: string
   reaction?: boolean
