@@ -19,7 +19,7 @@ export default function WalineComponent({
   reaction = true,
   login = 'enable',
 }: WalineProps) {
-  const walineInstanceRef = useRef<any>(null)
+  const walineInstanceRef = useRef<unknown>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
