@@ -1,0 +1,1486 @@
+---
+title: 'Golang 构建网络漏洞扫描器'
+date: '2025-11-13'
+tags: ['Golang', '网络安全']
+draft: false
+summary: '本文完整介绍了如何基于 Golang 从零开始开发一个完善的网络漏洞扫描器。'
+---
+
+>*本文完整介绍了如何基于 Golang 从零开始开发一个完善的网络漏洞扫描器。原文：[Building a Network Vulnerability Scanner with Go](https://www.sitepoint.com/building-a-network-vulnerability-scanner-with-go "Building a Network Vulnerability Scanner with Go")*
+
+![](https://image.deepnomind.com/blog/image/f6ac772115de907c3580f6e7c5c79dcc)
+
+本文将用 Go 语言创建一个简单且相当可靠的网络漏洞扫描器。Go 语言非常适合网络编程，它在设计时就考虑到了并发性，并且拥有出色的标准库。
+
+# 1. 项目设置
+
+#### 创建漏洞扫描器
+
+我们想要开发一个简单的命令行工具，该工具能够扫描主机网络、查找开放端口、识别运行的服务并发现潜在漏洞。这个扫描器一开始会非常简单，但随着逐步添加功能，其能力会不断增强。
+
+首先，我们将创建一个新的 Go 项目：
+
+```bash
+mkdir goscan
+cd goscan
+go mod init github.com/yourusername/goscan
+```
+
+这将为项目初始化新的Go模块，帮助我们管理依赖项。
+
+#### 配置包和环境
+
+扫描器将利用若干 Go 包：
+
+```golang
+package main
+
+import (
+    "fmt"
+    "net"
+    "os"
+    "strconv"
+    "sync"
+    "time"
+)
+
+func main() {
+    fmt.Println("GoScan - Network Vulnerability Scanner")
+}
+```
+
+这只是初始设置，但对于初始功能来说，已经足够了，我们会根据需要添加更多导入内容。像 `net` 这样的标准库包将负责处理大部分网络相关操作，而 `sync` 则会负责并发处理等。
+
+#### 网络扫描的伦理考量与风险
+
+在开始实现之前，首先需要探讨一下与网络扫描相关的伦理问题。在许多地区，未经授权的网络扫描是违法的，会被视为发动网络攻击的一种手段。因此，必须始终遵守以下规则：
+
+- **许可**：仅对拥有所有权或已获得明确许可进行扫描的临时网络和系统进行扫描。
+- **范围**：为扫描设定明确的范围，并不要超出该范围。
+- **时间**：不要进行可能导致服务中断或引发安全警报的过度扫描。
+- **披露**：如果发现漏洞，请负责任的将其报告给相应的系统所有者。
+- **法律合规**：了解并遵守有关网络扫描的当地法律。
+
+扫描工具的不当使用可能会导致法律诉讼、系统损坏或意外服务中断。我们的扫描器将包含诸如速率限制等防护措施，但最终责任在于用户以合乎道德的方式使用。
+
+# 2. 简单端口扫描器
+
+漏洞评估基于端口扫描。每个开放端口所提供的潜在易受攻击的服务信息正是我们所要查找的内容。现在，让我们用 Go 语言编写一个简单的端口扫描器。
+
+#### 低级端口扫描实现
+
+端口扫描：尝试与目标主机上的每一个可能的端口建立连接。如果连接成功，则该端口是开放的；如果连接失败，则该端口是关闭的或被过滤的。对于此功能，Go 的 `net` 包已经为我们提供了支持。
+
+那么，这就是我们所设计的一种简单的端口扫描器的示例：
+
+```golang
+package main
+
+import (
+    "fmt"
+    "net"
+    "time"
+)
+
+func scanPort(host string, port int, timeout time.Duration) bool {
+    target := fmt.Sprintf("%s:%d", host, port)
+    conn, err := net.DialTimeout("tcp", target, timeout)
+    
+    if err != nil {
+        return false
+    }
+    
+    conn.Close()
+    return true
+}
+
+func main() {
+    host := "localhost" // Change this to your target
+    timeout := time.Second * 2
+    
+    fmt.Printf("Scanning host: %s\n", host)
+    
+    // Scan ports 1-1024 (well-known ports)
+    for port := 1; port <= 1024; port++ {
+        if scanPort(host, port, timeout) {
+            fmt.Printf("Port %d is open\n", port)
+        }
+    }
+    
+    fmt.Println("Scan complete")
+}
+```
+
+#### 使用 `net` 包
+
+上述代码使用了 Go 语言的 `net` 包，该包提供了网络输入/输出接口及相关函数。那么，主要的组成部分都有哪些呢？
+
+- **net.DialTimeout**：此功能会尝试在设定的超时时间内连接到 TCP 网络地址。如果连接成功，会返回连接信息以及任何可能出现的错误。
+- **连接处理**：如果连接过程顺利，我们便知道该连接已打开，并会立即关闭该连接以释放资源。
+- **超时参数**：设定超时时间，以避免在任何被过滤的开放端口上陷入僵局。两秒是一个不错的初始值，但可根据网络状况进行调整。
+
+#### 对首次扫描进行测试
+
+现在，我们在本地主机上运行简单扫描器，那里可能有一些服务正在运行。
+
+- 将代码保存到名为 `main.go` 的文件中
+- 用 `go run main.go` 命令运行
+
+这将显示哪些本地端口是开放的。在普通开发机器上，可能会有 80（HTTP）端口、443（HTTPS）端口，或者根据运行的服务不同，还有其他任意数量的数据库端口正在使用。
+
+以下是一些可能得到的示例输出：
+
+```
+Scanning host: localhost
+Port 22 is open
+Port 80 is open
+Port 443 is open
+Scan complete
+```
+
+使用这种基本的扫描器是可以的，但也有不少明显的缺点：
+
+- **速度**：由于是按顺序扫描端口，所以速度极其缓慢。
+- **信息**：只是告诉我们某个端口是否开放，没有服务信息。
+- **覆盖范围有限**：只扫描前 1024 个端口。
+
+这些限制使得难以在实际应用中使用扫描器。
+
+# 3. 从这里开始改进：多线程扫描
+
+#### 为何最初的版本运行缓慢
+
+第一个端口扫描器能够正常工作，但其运行速度极其缓慢，几乎无法实际使用。问题在于其采用顺序扫描方法 —— 一次扫描一个端口。当一台主机有很多关闭/过滤的端口时，会在每个端口上等待连接超时，然后再转移到下一个端口，这造成了极大的时间浪费。
+
+为了展示这个问题，我们来看看基本扫描器的运行时间：
+
+- 对于扫描前 1024 个端口的情况，如果设置 2 秒的超时时间，最长时间将达 2048 秒（超过 34 分钟）。
+- 但即便对那些已关闭的端口的连接也会立即失败，这种方法由于网络延迟的原因也是效率低下。
+
+这种逐个端口进行的扫描方式是任何真正的漏洞扫描工具的瓶颈。
+
+#### 添加线程支持
+
+Go 语言在利用协程和通道实现并发方面表现尤为出色。因此，我们利用这些特性尝试同时扫描多个端口，从而显著提高性能。
+
+现在让我们来创建多线程端口扫描器：
+
+```golang
+package main
+
+import (
+    "fmt"
+    "net"
+    "sync"
+    "time"
+)
+
+type Result struct {
+    Port  int
+    State bool
+}
+
+func scanPort(host string, port int, timeout time.Duration) Result {
+    target := fmt.Sprintf("%s:%d", host, port)
+    conn, err := net.DialTimeout("tcp", target, timeout)
+    
+    if err != nil {
+        return Result{Port: port, State: false}
+    }
+    
+    conn.Close()
+    return Result{Port: port, State: true}
+}
+
+func scanPorts(host string, start, end int, timeout time.Duration) []Result {
+    var results []Result
+    var wg sync.WaitGroup
+    
+    // Create a buffered channel to collect results
+    resultChan := make(chan Result, end-start+1)
+    
+    // Create a semaphore to limit concurrent goroutines
+    // This prevents us from opening too many connections at once
+    semaphore := make(chan struct{}, 100) // Limit to 100 concurrent scans
+    
+    // Launch goroutines for each port
+    for port := start; port <= end; port++ {
+        wg.Add(1)
+        go func(p int) {
+            defer wg.Done()
+            
+            // Acquire semaphore
+            semaphore <- struct{}{}
+            defer func() { <-semaphore }() // Release semaphore
+            
+            result := scanPort(host, p, timeout)
+            resultChan <- result
+        }(port)
+    }
+    
+    // Close channel when all goroutines complete
+    go func() {
+        wg.Wait()
+        close(resultChan)
+    }()
+    
+    // Collect results from channel
+    for result := range resultChan {
+        if result.State {
+            results = append(results, result)
+        }
+    }
+    
+    return results
+}
+
+func main() {
+    host := "localhost" // Change this to your target
+    startPort := 1
+    endPort := 1024
+    timeout := time.Millisecond * 500 
+    
+    fmt.Printf("Scanning %s from port %d to %d\n", host, startPort, endPort)
+    startTime := time.Now()
+    
+    results := scanPorts(host, startPort, endPort, timeout)
+    
+    elapsed := time.Since(startTime)
+    
+    fmt.Printf("\nScan completed in %s\n", elapsed)
+    fmt.Printf("Found %d open ports:\n", len(results))
+    
+    for _, result := range results {
+        fmt.Printf("Port %d is open\n", result.Port)
+    }
+}
+```
+
+#### 多线程结果
+
+现在，我们来看看改进后扫描器的性能提升以及并发机制：
+
+- **协程**：为了使扫描过程高效，我们会为需要扫描的每个端口启动一个协程，这样当我们检查一个端口时，就可以同时检查其他端口。
+- **等待组**：同步的等待组  当我们启动协程时，希望等待它们完成。等待组有助于跟踪所有正在运行的协程，并等待它们完成。
+- **结果通道**：我们为所有协程的结果创建了一个缓冲通道。
+- **信号量模式**：使用信号量来限制并行进行的扫描数量,通过通道来实现,防止我们因打开过多连接而使目标系统甚至自身机器不堪重负。
+- **缩短超时时间**：由于以并行方式运行许多此类扫描，所以使用较短的超时时间。
+
+性能差距很大。因此，当我们实现这个功能时，可以在几分钟内扫描 1024 个端口，而且肯定不会超过半小时。
+
+示例输出：
+
+```
+Scanning localhost from port 1 to 1024
+Scan completed in 3.2s
+Found 3 open ports:
+Port 22 is open
+Port 80 is open
+Port 443 is open
+```
+
+这种多线程方法对于较大的端口范围和多个主机来说具有极好的扩展性。信号量模式确保即便要扫描上千个端口，也不会耗尽系统资源。
+
+# 4. 添加服务检测
+
+既然已经有了一个快速、高效的端口扫描器，接下来的步骤就是了解那些开放端口上运行的是哪些服务。这通常被称为“服务指纹识别”或“标志抓取”，是一个连接到开放端口并检查返回数据的过程。
+
+#### 服务旗标抓取（Banner Grabbing）实现
+
+服务旗标抓取指的是当我们打开服务并读取发送给我们的响应（即旗标信息）时的操作。因此，这是一种很好的确认服务是否运行的方法，许多服务都会在旗标中标识自身信息。
+
+我们在扫描器中加入抓取旗标的功能：
+
+```golang
+package main
+
+import (
+    "bufio"
+    "fmt"
+    "net"
+    "strings"
+    "sync"
+    "time"
+)
+
+type ScanResult struct {
+    Port     int
+    State    bool
+    Service  string
+    Banner   string
+    Version  string
+}
+
+func grabBanner(host string, port int, timeout time.Duration) (string, error) {
+    target := fmt.Sprintf("%s:%d", host, port)
+    conn, err := net.DialTimeout("tcp", target, timeout)
+    if err != nil {
+        return "", err
+    }
+    defer conn.Close()
+    
+    conn.SetReadDeadline(time.Now().Add(timeout))
+    
+    // Some services need a trigger to send data
+    // Send a simple HTTP request for web services
+    if port == 80 || port == 443 || port == 8080 || port == 8443 {
+        fmt.Fprintf(conn, "HEAD / HTTP/1.0\r\n\r\n")
+    } else {
+        // For other services, just wait for the banner
+        // Some services may require specific triggers
+    }
+    
+    // Read the response
+    reader := bufio.NewReader(conn)
+    banner, err := reader.ReadString('\n')
+    if err != nil {
+        return "", err
+    }
+    
+    return strings.TrimSpace(banner), nil
+}
+
+func identifyService(port int, banner string) (string, string) {
+    commonPorts := map[int]string{
+        21:    "FTP",
+        22:    "SSH",
+        23:    "Telnet",
+        25:    "SMTP",
+        53:    "DNS",
+        80:    "HTTP",
+        110:   "POP3",
+        143:   "IMAP",
+        443:   "HTTPS",
+        3306:  "MySQL",
+        5432:  "PostgreSQL",
+        6379:  "Redis",
+        8080:  "HTTP-Proxy",
+        27017: "MongoDB",
+    }
+    
+    // Try to identify service from common ports
+    service := "Unknown"
+    if s, exists := commonPorts[port]; exists {
+        service = s
+    }
+    
+    version := "Unknown"
+    
+    lowerBanner := strings.ToLower(banner)
+    
+    // SSH version detection
+    if strings.Contains(lowerBanner, "ssh") {
+        service = "SSH"
+        parts := strings.Split(banner, " ")
+        if len(parts) >= 2 {
+            version = parts[1]
+        }
+    }
+    
+    // HTTP server detection
+    if strings.Contains(lowerBanner, "http") || strings.Contains(lowerBanner, "apache") || 
+       strings.Contains(lowerBanner, "nginx") {
+        if port == 443 {
+            service = "HTTPS"
+        } else {
+            service = "HTTP"
+        }
+        
+        // Try to find server info in format "Server: Apache/2.4.29"
+        if strings.Contains(banner, "Server:") {
+            parts := strings.Split(banner, "Server:")
+            if len(parts) >= 2 {
+                version = strings.TrimSpace(parts[1])
+            }
+        }
+    }
+    
+    return service, version
+}
+
+func scanPort(host string, port int, timeout time.Duration) ScanResult {
+    target := fmt.Sprintf("%s:%d", host, port)
+    conn, err := net.DialTimeout("tcp", target, timeout)
+    
+    if err != nil {
+        return ScanResult{Port: port, State: false}
+    }
+    
+    conn.Close()
+    
+    banner, err := grabBanner(host, port, timeout)
+    
+    service := "Unknown"
+    version := "Unknown"
+    
+    if err == nil && banner != "" {
+        service, version = identifyService(port, banner)
+    }
+    
+    return ScanResult{
+        Port:    port,
+        State:   true,
+        Service: service,
+        Banner:  banner,
+        Version: version,
+    }
+}
+
+func scanPorts(host string, start, end int, timeout time.Duration) []ScanResult {
+    var results []ScanResult
+    var wg sync.WaitGroup
+    
+    resultChan := make(chan ScanResult, end-start+1)
+    
+    semaphore := make(chan struct{}, 100)
+    
+    for port := start; port <= end; port++ {
+        wg.Add(1)
+        go func(p int) {
+            defer wg.Done()
+            
+            semaphore <- struct{}{}
+            defer func() { <-semaphore }()
+            
+            result := scanPort(host, p, timeout)
+            resultChan <- result
+        }(port)
+    }
+    
+    go func() {
+        wg.Wait()
+        close(resultChan)
+    }()
+    
+    for result := range resultChan {
+        if result.State {
+            results = append(results, result)
+        }
+    }
+    
+    return results
+}
+
+func main() {
+    host := "localhost"
+    startPort := 1
+    endPort := 1024
+    timeout := time.Millisecond * 800 
+    
+    fmt.Printf("Scanning %s from port %d to %d\n", host, startPort, endPort)
+    startTime := time.Now()
+    
+    results := scanPorts(host, startPort, endPort, timeout)
+    
+    elapsed := time.Since(startTime)
+    
+    fmt.Printf("\nScan completed in %s\n", elapsed)
+    fmt.Printf("Found %d open ports:\n\n", len(results))
+    
+    fmt.Println("PORT\tSERVICE\tVERSION\tBANNER")
+    fmt.Println("----\t-------\t-------\t------")
+    for _, result := range results {
+        bannerPreview := ""
+        if len(result.Banner) > 30 {
+            bannerPreview = result.Banner[:30] + "..."
+        } else {
+            bannerPreview = result.Banner
+        }
+        
+        fmt.Printf("%d\t%s\t%s\t%s\n", 
+            result.Port, 
+            result.Service, 
+            result.Version, 
+            bannerPreview)
+    }
+}
+```
+
+#### 识别正在运行的服务
+
+两种主要的服务检测策略：
+
+- **基于端口识别**：通过映射到公共端口号（例如，端口 80 是 HTTP），对服务有一个可能的猜测。
+- **旗标分析**：获取旗标文本并查找服务标识符和版本信息。
+
+第一个函数 `grabBanner` 旨在从服务中获取第一个响应。有些服务（如 HTTP）要求发送请求并接收回复，为此我们会添加特定案例来处理这种情况。
+
+#### 基本版本检测
+
+版本检测对于漏洞的识别至关重要。在可能的情况下，扫描器会解析服务旗标以获取版本信息：
+
+- **SSH**：通常会以 `SSH-2.0-OpenSSH_7.4` 这样的形式提供版本信息。
+- **HTTP 服务器**：通常会在响应头中（如 `Server: Apache/2.4.29`）返回其版本信息。
+- **数据库服务器**：可能会在其欢迎消息中披露版本信息。
+
+现在，对于每个开放端口，输出都会返回更多信息：
+
+```
+Scanning localhost from port 1 to 1024
+Scan completed in 5.4s
+Found 3 open ports:
+
+PORT    SERVICE VERSION BANNER
+----    ------- ------- ------
+22      SSH     2.0     SSH-2.0-OpenSSH_8.4p1 Ubuntu-6
+80      HTTP    Apache/2.4.41 Server: Apache/2.4.41 (Ubuntu)
+443     HTTPS   Unknown Connection closed by foreign...
+```
+
+这种增强后的信息对于漏洞评估而言要具有更高的价值。
+
+# 5. 漏洞检测实现
+
+既然能列出正在运行的服务及其版本，接下来我们将实现针对漏洞的检测。我们对服务信息进行分析，并与已知漏洞进行对比。
+
+#### 编写简单的漏洞测试
+
+我们将根据常见服务和版本，基于已知漏洞构建数据库。为了简便起见，我们将创建一个嵌入代码的漏洞数据库，但在实际场景中，扫描器很可能会查询外部漏洞数据库（如 CVE 或 NVD）。
+
+现在进一步完善代码，使其能够检测出漏洞：
+
+```golang
+package main
+
+import (
+    "bufio"
+    "fmt"
+    "net"
+    "strings"
+    "sync"
+    "time"
+)
+
+type ScanResult struct {
+    Port          int
+    State         bool
+    Service       string
+    Banner        string
+    Version       string
+    Vulnerabilities []Vulnerability
+}
+
+type Vulnerability struct {
+    ID          string
+    Description string
+    Severity    string
+    Reference   string
+}
+
+var vulnerabilityDB = []struct {
+    Service     string
+    Version     string
+    Vulnerability Vulnerability
+}{
+    {
+        Service: "SSH",
+        Version: "OpenSSH_7.4",
+        Vulnerability: Vulnerability{
+            ID:          "CVE-2017-15906",
+            Description: "The process_open function in sftp-server.c in OpenSSH before 7.6 does not properly prevent write operations in read-only mode",
+            Severity:    "Medium",
+            Reference:   "https://nvd.nist.gov/vuln/detail/CVE-2017-15906",
+        },
+    },
+    {
+        Service: "HTTP",
+        Version: "Apache/2.4.29",
+        Vulnerability: Vulnerability{
+            ID:          "CVE-2019-0211",
+            Description: "Apache HTTP Server 2.4.17 to 2.4.38 - Local privilege escalation through mod_prefork and mod_http2",
+            Severity:    "High",
+            Reference:   "https://nvd.nist.gov/vuln/detail/CVE-2019-0211",
+        },
+    },
+    {
+        Service: "HTTP",
+        Version: "Apache/2.4.41",
+        Vulnerability: Vulnerability{
+            ID:          "CVE-2020-9490",
+            Description: "A specially crafted value for the 'Cache-Digest' header can cause a heap overflow in Apache HTTP Server 2.4.0-2.4.41",
+            Severity:    "High",
+            Reference:   "https://nvd.nist.gov/vuln/detail/CVE-2020-9490",
+        },
+    },
+    {
+        Service: "MySQL",
+        Version: "5.7",
+        Vulnerability: Vulnerability{
+            ID:          "CVE-2020-2922",
+            Description: "Vulnerability in MySQL Server allows unauthorized users to obtain sensitive information",
+            Severity:    "Medium",
+            Reference:   "https://nvd.nist.gov/vuln/detail/CVE-2020-2922",
+        },
+    },
+    // Add more known vulnerabilities here
+}
+
+// checkVulnerabilities checks if a service/version combination has known vulnerabilities
+func checkVulnerabilities(service, version string) []Vulnerability {
+    var vulnerabilities []Vulnerability
+    
+    for _, vuln := range vulnerabilityDB {
+        // Simple matching - in a real scanner, this would be more sophisticated
+        if vuln.Service == service && strings.Contains(version, vuln.Version) {
+            vulnerabilities = append(vulnerabilities, vuln.Vulnerability)
+        }
+    }
+    
+    return vulnerabilities
+}
+
+// grabBanner attempts to read the banner from an open port
+func grabBanner(host string, port int, timeout time.Duration) (string, error) {
+    target := fmt.Sprintf("%s:%d", host, port)
+    conn, err := net.DialTimeout("tcp", target, timeout)
+    if err != nil {
+        return "", err
+    }
+    defer conn.Close()
+    
+    conn.SetReadDeadline(time.Now().Add(timeout))
+    
+
+    if port == 80 || port == 443 || port == 8080 || port == 8443 {
+        fmt.Fprintf(conn, "HEAD / HTTP/1.0\r\nHost: %s\r\n\r\n", host)
+    } else {
+
+    }
+    
+    reader := bufio.NewReader(conn)
+    banner, err := reader.ReadString('\n')
+    if err != nil {
+        return "", err
+    }
+    
+    return strings.TrimSpace(banner), nil
+}
+
+func identifyService(port int, banner string) (string, string) {
+    commonPorts := map[int]string{
+        21:    "FTP",
+        22:    "SSH",
+        23:    "Telnet",
+        25:    "SMTP",
+        53:    "DNS",
+        80:    "HTTP",
+        110:   "POP3",
+        143:   "IMAP",
+        443:   "HTTPS",
+        3306:  "MySQL",
+        5432:  "PostgreSQL",
+        6379:  "Redis",
+        8080:  "HTTP-Proxy",
+        27017: "MongoDB",
+    }
+    
+    service := "Unknown"
+    if s, exists := commonPorts[port]; exists {
+        service = s
+    }
+    
+    version := "Unknown"
+    
+    lowerBanner := strings.ToLower(banner)
+    
+    if strings.Contains(lowerBanner, "ssh") {
+        service = "SSH"
+        parts := strings.Split(banner, " ")
+        if len(parts) >= 2 {
+            version = parts[1]
+        }
+    }
+    
+    if strings.Contains(lowerBanner, "http") || strings.Contains(lowerBanner, "apache") || 
+       strings.Contains(lowerBanner, "nginx") {
+        if port == 443 {
+            service = "HTTPS"
+        } else {
+            service = "HTTP"
+        }
+        
+        if strings.Contains(banner, "Server:") {
+            parts := strings.Split(banner, "Server:")
+            if len(parts) >= 2 {
+                version = strings.TrimSpace(parts[1])
+            }
+        }
+    }
+    
+    return service, version
+}
+
+func scanPort(host string, port int, timeout time.Duration) ScanResult {
+    target := fmt.Sprintf("%s:%d", host, port)
+    conn, err := net.DialTimeout("tcp", target, timeout)
+    
+    if err != nil {
+        return ScanResult{Port: port, State: false}
+    }
+    
+    conn.Close()
+    
+    banner, err := grabBanner(host, port, timeout)
+    
+    service := "Unknown"
+    version := "Unknown"
+    
+    if err == nil && banner != "" {
+        service, version = identifyService(port, banner)
+    }
+    
+    vulnerabilities := checkVulnerabilities(service, version)
+    
+    return ScanResult{
+        Port:           port,
+        State:          true,
+        Service:        service,
+        Banner:         banner,
+        Version:        version,
+        Vulnerabilities: vulnerabilities,
+    }
+}
+
+func scanPorts(host string, start, end int, timeout time.Duration) []ScanResult {
+    var results []ScanResult
+    var wg sync.WaitGroup
+    
+    resultChan := make(chan ScanResult, end-start+1)
+    
+    semaphore := make(chan struct{}, 100)
+    
+    for port := start; port <= end; port++ {
+        wg.Add(1)
+        go func(p int) {
+            defer wg.Done()
+            
+            semaphore <- struct{}{}
+            defer func() { <-semaphore }()
+            
+            result := scanPort(host, p, timeout)
+            resultChan <- result
+        }(port)
+    }
+    
+    go func() {
+        wg.Wait()
+        close(resultChan)
+    }()
+    
+    for result := range resultChan {
+        if result.State {
+            results = append(results, result)
+        }
+    }
+    
+    return results
+}
+
+func main() {
+    host := "localhost"
+    startPort := 1
+    endPort := 1024
+    timeout := time.Second * 1 
+    
+    fmt.Printf("Scanning %s from port %d to %d\n", host, startPort, endPort)
+    startTime := time.Now()
+    
+    results := scanPorts(host, startPort, endPort, timeout)
+    
+    elapsed := time.Since(startTime)
+    
+    fmt.Printf("\nScan completed in %s\n", elapsed)
+    fmt.Printf("Found %d open ports:\n\n", len(results))
+    
+    fmt.Println("PORT\tSERVICE\tVERSION")
+    fmt.Println("----\t-------\t-------")
+    for _, result := range results {
+        fmt.Printf("%d\t%s\t%s\n", 
+            result.Port, 
+            result.Service, 
+            result.Version)
+        
+        if len(result.Vulnerabilities) > 0 {
+            fmt.Println("  Vulnerabilities:")
+            for _, vuln := range result.Vulnerabilities {
+                fmt.Printf("    [%s] %s - %s\n", 
+                    vuln.Severity, 
+                    vuln.ID, 
+                    vuln.Description)
+                fmt.Printf("    Reference: %s\n\n", vuln.Reference)
+            }
+        }
+    }
+}package main
+
+import (
+    "bufio"
+    "fmt"
+    "net"
+    "strings"
+    "sync"
+    "time"
+)
+
+type ScanResult struct {
+    Port          int
+    State         bool
+    Service       string
+    Banner        string
+    Version       string
+    Vulnerabilities []Vulnerability
+}
+
+type Vulnerability struct {
+    ID          string
+    Description string
+    Severity    string
+    Reference   string
+}
+
+var vulnerabilityDB = []struct {
+    Service     string
+    Version     string
+    Vulnerability Vulnerability
+}{
+    {
+        Service: "SSH",
+        Version: "OpenSSH_7.4",
+        Vulnerability: Vulnerability{
+            ID:          "CVE-2017-15906",
+            Description: "The process_open function in sftp-server.c in OpenSSH before 7.6 does not properly prevent write operations in read-only mode",
+            Severity:    "Medium",
+            Reference:   "https://nvd.nist.gov/vuln/detail/CVE-2017-15906",
+        },
+    },
+    {
+        Service: "HTTP",
+        Version: "Apache/2.4.29",
+        Vulnerability: Vulnerability{
+            ID:          "CVE-2019-0211",
+            Description: "Apache HTTP Server 2.4.17 to 2.4.38 - Local privilege escalation through mod_prefork and mod_http2",
+            Severity:    "High",
+            Reference:   "https://nvd.nist.gov/vuln/detail/CVE-2019-0211",
+        },
+    },
+    {
+        Service: "HTTP",
+        Version: "Apache/2.4.41",
+        Vulnerability: Vulnerability{
+            ID:          "CVE-2020-9490",
+            Description: "A specially crafted value for the 'Cache-Digest' header can cause a heap overflow in Apache HTTP Server 2.4.0-2.4.41",
+            Severity:    "High",
+            Reference:   "https://nvd.nist.gov/vuln/detail/CVE-2020-9490",
+        },
+    },
+    {
+        Service: "MySQL",
+        Version: "5.7",
+        Vulnerability: Vulnerability{
+            ID:          "CVE-2020-2922",
+            Description: "Vulnerability in MySQL Server allows unauthorized users to obtain sensitive information",
+            Severity:    "Medium",
+            Reference:   "https://nvd.nist.gov/vuln/detail/CVE-2020-2922",
+        },
+    },
+    // Add more known vulnerabilities here
+}
+
+// checkVulnerabilities checks if a service/version combination has known vulnerabilities
+func checkVulnerabilities(service, version string) []Vulnerability {
+    var vulnerabilities []Vulnerability
+    
+    for _, vuln := range vulnerabilityDB {
+        // Simple matching - in a real scanner, this would be more sophisticated
+        if vuln.Service == service && strings.Contains(version, vuln.Version) {
+            vulnerabilities = append(vulnerabilities, vuln.Vulnerability)
+        }
+    }
+    
+    return vulnerabilities
+}
+
+// grabBanner attempts to read the banner from an open port
+func grabBanner(host string, port int, timeout time.Duration) (string, error) {
+    target := fmt.Sprintf("%s:%d", host, port)
+    conn, err := net.DialTimeout("tcp", target, timeout)
+    if err != nil {
+        return "", err
+    }
+    defer conn.Close()
+    
+    conn.SetReadDeadline(time.Now().Add(timeout))
+    
+
+    if port == 80 || port == 443 || port == 8080 || port == 8443 {
+        fmt.Fprintf(conn, "HEAD / HTTP/1.0\r\nHost: %s\r\n\r\n", host)
+    } else {
+
+    }
+    
+    reader := bufio.NewReader(conn)
+    banner, err := reader.ReadString('\n')
+    if err != nil {
+        return "", err
+    }
+    
+    return strings.TrimSpace(banner), nil
+}
+
+func identifyService(port int, banner string) (string, string) {
+    commonPorts := map[int]string{
+        21:    "FTP",
+        22:    "SSH",
+        23:    "Telnet",
+        25:    "SMTP",
+        53:    "DNS",
+        80:    "HTTP",
+        110:   "POP3",
+        143:   "IMAP",
+        443:   "HTTPS",
+        3306:  "MySQL",
+        5432:  "PostgreSQL",
+        6379:  "Redis",
+        8080:  "HTTP-Proxy",
+        27017: "MongoDB",
+    }
+    
+    service := "Unknown"
+    if s, exists := commonPorts[port]; exists {
+        service = s
+    }
+    
+    version := "Unknown"
+    
+    lowerBanner := strings.ToLower(banner)
+    
+    if strings.Contains(lowerBanner, "ssh") {
+        service = "SSH"
+        parts := strings.Split(banner, " ")
+        if len(parts) >= 2 {
+            version = parts[1]
+        }
+    }
+    
+    if strings.Contains(lowerBanner, "http") || strings.Contains(lowerBanner, "apache") || 
+       strings.Contains(lowerBanner, "nginx") {
+        if port == 443 {
+            service = "HTTPS"
+        } else {
+            service = "HTTP"
+        }
+        
+        if strings.Contains(banner, "Server:") {
+            parts := strings.Split(banner, "Server:")
+            if len(parts) >= 2 {
+                version = strings.TrimSpace(parts[1])
+            }
+        }
+    }
+    
+    return service, version
+}
+
+func scanPort(host string, port int, timeout time.Duration) ScanResult {
+    target := fmt.Sprintf("%s:%d", host, port)
+    conn, err := net.DialTimeout("tcp", target, timeout)
+    
+    if err != nil {
+        return ScanResult{Port: port, State: false}
+    }
+    
+    conn.Close()
+    
+    banner, err := grabBanner(host, port, timeout)
+    
+    service := "Unknown"
+    version := "Unknown"
+    
+    if err == nil && banner != "" {
+        service, version = identifyService(port, banner)
+    }
+    
+    vulnerabilities := checkVulnerabilities(service, version)
+    
+    return ScanResult{
+        Port:           port,
+        State:          true,
+        Service:        service,
+        Banner:         banner,
+        Version:        version,
+        Vulnerabilities: vulnerabilities,
+    }
+}
+
+func scanPorts(host string, start, end int, timeout time.Duration) []ScanResult {
+    var results []ScanResult
+    var wg sync.WaitGroup
+    
+    resultChan := make(chan ScanResult, end-start+1)
+    
+    semaphore := make(chan struct{}, 100)
+    
+    for port := start; port <= end; port++ {
+        wg.Add(1)
+        go func(p int) {
+            defer wg.Done()
+            
+            semaphore <- struct{}{}
+            defer func() { <-semaphore }()
+            
+            result := scanPort(host, p, timeout)
+            resultChan <- result
+        }(port)
+    }
+    
+    go func() {
+        wg.Wait()
+        close(resultChan)
+    }()
+    
+    for result := range resultChan {
+        if result.State {
+            results = append(results, result)
+        }
+    }
+    
+    return results
+}
+
+func main() {
+    host := "localhost"
+    startPort := 1
+    endPort := 1024
+    timeout := time.Second * 1 
+    
+    fmt.Printf("Scanning %s from port %d to %d\n", host, startPort, endPort)
+    startTime := time.Now()
+    
+    results := scanPorts(host, startPort, endPort, timeout)
+    
+    elapsed := time.Since(startTime)
+    
+    fmt.Printf("\nScan completed in %s\n", elapsed)
+    fmt.Printf("Found %d open ports:\n\n", len(results))
+    
+    fmt.Println("PORT\tSERVICE\tVERSION")
+    fmt.Println("----\t-------\t-------")
+    for _, result := range results {
+        fmt.Printf("%d\t%s\t%s\n", 
+            result.Port, 
+            result.Service, 
+            result.Version)
+        
+        if len(result.Vulnerabilities) > 0 {
+            fmt.Println("  Vulnerabilities:")
+            for _, vuln := range result.Vulnerabilities {
+                fmt.Printf("    [%s] %s - %s\n", 
+                    vuln.Severity, 
+                    vuln.ID, 
+                    vuln.Description)
+                fmt.Printf("    Reference: %s\n\n", vuln.Reference)
+            }
+        }
+    }
+}
+```
+
+#### 基于版本的漏洞匹配
+
+针对漏洞检测我们用简单版本匹配方法：
+
+- **直接匹配**：将服务类型和版本与漏洞数据库进行匹配。
+- **部分匹配**：对于漏洞版本的匹配，我们会对版本字符串进行限制性检查，这样即使版本字符串包含额外信息，也能识别出存在漏洞的系统。
+
+在实际的扫描器中，匹配会更为复杂，会考虑到以下因素：
+
+- 版本范围（即版本 2.4.0 至 2.4.38 受影响）
+- 特定配置的漏洞
+- 操作系统特定的问题
+- 更细致的版本比较
+
+#### 报告发现的情况
+
+报告结果是漏洞检测流程中的最后一步，需要以简洁且具有可操作性的格式进行。扫描器现在：
+
+- 列出所有开放端口及其服务及版本信息
+- 对于每个存在漏洞的服务，会显示：
+  - 漏洞标识（例如，CVE 编号）
+  - 漏洞描述
+  - 严重程度评级
+  - 更多信息的参考链接
+
+示例输出：
+
+```
+Scanning localhost from port 1 to 1024
+Scan completed in 6.2s
+Found 3 open ports:
+
+PORT    SERVICE VERSION
+----    ------- -------
+22      SSH     OpenSSH_7.4p1
+  Vulnerabilities:
+    [Medium] CVE-2017-15906 - The process_open function in sftp-server.c in OpenSSH before 7.6 does not properly prevent write operations in read-only mode
+    Reference: https://nvd.nist.gov/vuln/detail/CVE-2017-15906
+
+80      HTTP    Apache/2.4.41
+  Vulnerabilities:
+    [High] CVE-2020-9490 - A specially crafted value for the 'Cache-Digest' header can cause a heap overflow in Apache HTTP Server 2.4.0-2.4.41
+    Reference: https://nvd.nist.gov/vuln/detail/CVE-2020-9490
+
+443     HTTPS   Unknown
+```
+
+这份详尽的漏洞数据能够帮助网络安全专家迅速找出并排序出需要解决的安全问题。
+
+# 最后完善与使用方法
+
+现在已经有了一个具备服务检测和漏洞匹配功能的基本漏洞扫描器；我们对其进行完善，以便在实际应用中更具实用性。
+
+##### 命令行参数
+
+扫描器可以通过命令行标志进行配置，这些标志能够设定目标、端口范围以及扫描选项。使用 Go 的 `flag` 包进行配置非常简单。
+
+添加命令行参数：
+
+```golang
+package main
+
+import (
+    "bufio"
+    "encoding/json"
+    "flag"
+    "fmt"
+    "net"
+    "os"
+    "strings"
+    "sync"
+    "time"
+)
+
+type ScanResult struct {
+    Port            int
+    State           bool
+    Service         string
+    Banner          string
+    Version         string
+    Vulnerabilities []Vulnerability
+}
+
+type Vulnerability struct {
+    ID          string
+    Description string
+    Severity    string
+    Reference   string
+}
+
+var vulnerabilityDB = []struct {
+    Service       string
+    Version       string
+    Vulnerability Vulnerability
+}{
+    // ... (same as before)
+}
+
+
+func main() {
+    hostPtr := flag.String("host", "", "Target host to scan (required)")
+    startPortPtr := flag.Int("start", 1, "Starting port number")
+    endPortPtr := flag.Int("end", 1024, "Ending port number")
+    timeoutPtr := flag.Int("timeout", 1000, "Timeout in milliseconds")
+    concurrencyPtr := flag.Int("concurrency", 100, "Number of concurrent scans")
+    formatPtr := flag.String("format", "text", "Output format: text, json, or csv")
+    verbosePtr := flag.Bool("verbose", false, "Show verbose output including banners")
+    outputFilePtr := flag.String("output", "", "Output file (default is stdout)")
+    
+    flag.Parse()
+    
+    if *hostPtr == "" {
+        fmt.Println("Error: host is required")
+        flag.Usage()
+        os.Exit(1)
+    }
+    
+    if *startPortPtr < 1 || *startPortPtr > 65535 {
+        fmt.Println("Error: starting port must be between 1 and 65535")
+        os.Exit(1)
+    }
+    if *endPortPtr < 1 || *endPortPtr > 65535 {
+        fmt.Println("Error: ending port must be between 1 and 65535")
+        os.Exit(1)
+    }
+    if *startPortPtr > *endPortPtr {
+        fmt.Println("Error: starting port must be less than or equal to ending port")
+        os.Exit(1)
+    }
+    
+    timeout := time.Duration(*timeoutPtr) * time.Millisecond
+    
+    var outputFile *os.File
+    var err error
+    
+    if *outputFilePtr != "" {
+        outputFile, err = os.Create(*outputFilePtr)
+        if err != nil {
+            fmt.Printf("Error creating output file: %v\n", err)
+            os.Exit(1)
+        }
+        defer outputFile.Close()
+    } else {
+        outputFile = os.Stdout
+    }
+    
+    fmt.Fprintf(outputFile, "Scanning %s from port %d to %d\n", *hostPtr, *startPortPtr, *endPortPtr)
+    startTime := time.Now()
+    
+    var results []ScanResult
+    var wg sync.WaitGroup
+    
+    resultChan := make(chan ScanResult, *endPortPtr-*startPortPtr+1)
+    
+    semaphore := make(chan struct{}, *concurrencyPtr)
+    
+    for port := *startPortPtr; port <= *endPortPtr; port++ {
+        wg.Add(1)
+        go func(p int) {
+            defer wg.Done()
+            
+            semaphore <- struct{}{}
+            defer func() { <-semaphore }()
+            
+            result := scanPort(*hostPtr, p, timeout)
+            resultChan <- result
+        }(port)
+    }
+    
+    go func() {
+        wg.Wait()
+        close(resultChan)
+    }()
+    
+    for result := range resultChan {
+        if result.State {
+            results = append(results, result)
+        }
+    }
+    
+    elapsed := time.Since(startTime)
+    
+    switch *formatPtr {
+    case "json":
+        outputJSON(outputFile, results, elapsed)
+    case "csv":
+        outputCSV(outputFile, results, elapsed, *verbosePtr)
+    default:
+        outputText(outputFile, results, elapsed, *verbosePtr)
+    }
+}
+
+func outputText(w *os.File, results []ScanResult, elapsed time.Duration, verbose bool) {
+    fmt.Fprintf(w, "\nScan completed in %s\n", elapsed)
+    fmt.Fprintf(w, "Found %d open ports:\n\n", len(results))
+    
+    if len(results) == 0 {
+        fmt.Fprintf(w, "No open ports found.\n")
+        return
+    }
+    
+    fmt.Fprintf(w, "PORT\tSERVICE\tVERSION\n")
+    fmt.Fprintf(w, "----\t-------\t-------\n")
+    
+    for _, result := range results {
+        fmt.Fprintf(w, "%d\t%s\t%s\n", 
+            result.Port, 
+            result.Service, 
+            result.Version)
+        
+        if verbose {
+            fmt.Fprintf(w, "  Banner: %s\n", result.Banner)
+        }
+        
+        if len(result.Vulnerabilities) > 0 {
+            fmt.Fprintf(w, "  Vulnerabilities:\n")
+            for _, vuln := range result.Vulnerabilities {
+                fmt.Fprintf(w, "    [%s] %s - %s\n", 
+                    vuln.Severity, 
+                    vuln.ID, 
+                    vuln.Description)
+                fmt.Fprintf(w, "    Reference: %s\n\n", vuln.Reference)
+            }
+        }
+    }
+}
+
+func outputJSON(w *os.File, results []ScanResult, elapsed time.Duration) {
+    output := struct {
+        ScanTime   string       `json:"scan_time"`
+        ElapsedTime string       `json:"elapsed_time"`
+        TotalPorts int          `json:"total_ports"`
+        OpenPorts  int          `json:"open_ports"`
+        Results    []ScanResult `json:"results"`
+    }{
+        ScanTime:    time.Now().Format(time.RFC3339),
+        ElapsedTime: elapsed.String(),
+        TotalPorts:  0, 
+        OpenPorts:   len(results),
+        Results:     results,
+    }
+    
+    encoder := json.NewEncoder(w)
+    encoder.SetIndent("", "  ")
+    encoder.Encode(output)
+}
+
+func outputCSV(w *os.File, results []ScanResult, elapsed time.Duration, verbose bool) {
+    fmt.Fprintf(w, "Port,Service,Version,Vulnerability ID,Severity,Description\n")
+    
+    for _, result := range results {
+        if len(result.Vulnerabilities) == 0 {
+            fmt.Fprintf(w, "%d,%s,%s,,,\n", 
+                result.Port, 
+                escapeCSV(result.Service), 
+                escapeCSV(result.Version))
+        } else {
+            for _, vuln := range result.Vulnerabilities {
+                fmt.Fprintf(w, "%d,%s,%s,%s,%s,%s\n", 
+                    result.Port, 
+                    escapeCSV(result.Service), 
+                    escapeCSV(result.Version),
+                    escapeCSV(vuln.ID),
+                    escapeCSV(vuln.Severity),
+                    escapeCSV(vuln.Description))
+            }
+        }
+    }
+    
+    fmt.Fprintf(w, "\n# Scan completed in %s, found %d open ports\n", 
+        elapsed, len(results))
+}
+
+func escapeCSV(s string) string {
+    if strings.Contains(s, ",") || strings.Contains(s, "\"") || strings.Contains(s, "\n") {
+        return "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\""
+    }
+    return s
+}
+```
+
+##### 输出格式
+
+扫描器现在可以输出三种格式：
+
+- **文本**：易于阅读，易于编写，非常适合交互使用。
+- **JSON**：结构化输出，适用于机器处理以及与其他工具的集成。
+- **CSV**：电子表格兼容的格式，用于分析和报告。
+
+输出文本还会提供更多信息，例如如果设置了详细模式，则会提供原始旗标信息，对于调试或深入分析也非常方便。
+
+##### 示例用法及结果
+
+如果打算将扫描器用于不同场合，以下是一些可能的选择：
+
+**单个主机的基本扫描：**
+
+```
+$ go run main.go -host example.com
+```
+
+**扫描指定端口范围：**
+
+```
+$ go run main.go -host example.com -start 80 -end 443
+```
+
+**增加超时和详细信息：**
+
+```
+$ go run main.go -host example.com -verbose -timeout 2000
+```
+
+**以更高的并发性扫描以获得更快的结果：**
+
+```
+$ go run main.go -host example.com -concurrency 200
+```
+
+示例文本输出：
+
+```
+Scanning example.com from port 1 to 1024
+Scan completed in 12.6s
+Found 3 open ports:
+
+PORT    SERVICE VERSION
+----    ------- -------
+22      SSH     OpenSSH_7.4p1
+  Vulnerabilities:
+    [Medium] CVE-2017-15906 - The process_open function in sftp-server.c in OpenSSH before 7.6 does not properly prevent write operations in read-only mode
+    Reference: https://nvd.nist.gov/vuln/detail/CVE-2017-15906
+
+80      HTTP    Apache/2.4.41
+  Vulnerabilities:
+    [High] CVE-2020-9490 - A specially crafted value for the 'Cache-Digest' header can cause a heap overflow in Apache HTTP Server 2.4.0-2.4.41
+    Reference: https://nvd.nist.gov/vuln/detail/CVE-2020-9490
+
+443     HTTPS   nginx/1.18.0：
+```
+
+JSON 输出示例：
+
+```json
+{
+  "scan_time": "2025-03-18T14:30:00Z",
+  "elapsed_time": "12.6s",
+  "total_ports": 1024,
+  "open_ports": 3,
+  "results": [
+    {
+      "Port": 22,
+      "State": true,
+      "Service": "SSH",
+      "Banner": "SSH-2.0-OpenSSH_7.4p1",
+      "Version": "OpenSSH_7.4p1",
+      "Vulnerabilities": [
+        {
+          "ID": "CVE-2017-15906",
+          "Description": "The process_open function in sftp-server.c in OpenSSH before 7.6 does not properly prevent write operations in read-only mode",
+          "Severity": "Medium",
+          "Reference": "https://nvd.nist.gov/vuln/detail/CVE-2017-15906"
+        }
+      ]
+    },
+    {
+      "Port": 80,
+      "State": true,
+      "Service": "HTTP",
+      "Banner": "HTTP/1.1 200 OK\r\nServer: Apache/2.4.41",
+      "Version": "Apache/2.4.41",
+      "Vulnerabilities": [
+        {
+          "ID": "CVE-2020-9490",
+          "Description": "A specially crafted value for the 'Cache-Digest' header can cause a heap overflow in Apache HTTP Server 2.4.0-2.4.41",
+          "Severity": "High",
+          "Reference": "https://nvd.nist.gov/vuln/detail/CVE-2020-9490"
+        }
+      ]
+    },
+    {
+      "Port": 443,
+      "State": true,
+      "Service": "HTTPS",
+      "Banner": "HTTP/1.1 200 OK\r\nServer: nginx/1.18.0",
+      "Version": "nginx/1.18.0",
+      "Vulnerabilities": []
+    }
+  ]
+}
+```
+
+我们用 Go 语言构建了一个强大的网络漏洞扫描器，这表明该语言非常适合用于安全工具。扫描器能迅速打开端口，识别端口上运行的服务，并判断是否存在已知漏洞。
+
+扫描器提供了有关网络上运行的服务的有用信息，包括多线程、服务指纹识别以及多种输出格式。
+
+请记住，像扫描器这样的工具只能在符合道德和法律规范的条件下使用，并且需要获得对目标系统的扫描授权。如果操作得当，定期进行漏洞扫描是良好安全态势的重要组成部分，能够帮助保护系统免受威胁。
+
+可以在 [GitHub](https://github.com/rezmoss/network-vulnerability-scanner "GitHub") 上找到该项目的完整源代码。
