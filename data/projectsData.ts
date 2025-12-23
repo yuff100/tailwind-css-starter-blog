@@ -7,16 +7,22 @@ interface Project {
 
 const projectsData: Project[] = [
   {
-    title: 'AI 职能厨师',
-    description: '接入 AI 大模型的职能厨师，提供智能化的烹饪建议和食谱推荐。',
+    title: 'AI 智能厨师 Demo',
+    description: '接入 AI 大模型的智能厨师，提供智能化的烹饪建议和食谱推荐。',
     imgSrc: '/static/images/ai-chef.png',
     href: 'https://ai-chef.deepnomind.com/',
   },
   {
-    title: 'AI Draw IO',
+    title: 'AI 架构图 Demo',
     description: '基于 AI 的 Draw IO 图形编辑器，支持智能图形生成和编辑。',
     imgSrc: '/static/images/ai-drawio.png',
     href: 'https://ai-drawio.deepnomind.com/',
+  },
+  {
+    title: '图床服务 Demo',
+    description: '支持七牛云和又拍云OSS的图床服务。',
+    imgSrc: '/static/images/image-bed.png',
+    href: 'https://image-bed.deepnomind.com/',
   },
 ]
 
