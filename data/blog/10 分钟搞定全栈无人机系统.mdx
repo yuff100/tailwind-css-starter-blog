@@ -8,7 +8,7 @@ summary: '本文详细介绍了如何通过开源系统和开放硬件打造大�
 
 > *本文详细介绍了如何通过开源系统和开放硬件打造大规模商用无人机系统，并且强调了领域专业知识和合规性在成功商用无人机系统开发中的重要作用。原文：[Mastering Full-Stack Unmanned Aerial Systems](https://jinlow.medium.com/mastering-full-stack-unmanned-aerial-systems-from-hardware-to-the-211-billion-low-altitude-bf71e4788dea "Mastering Full-Stack Unmanned Aerial Systems: From Hardware to the $211 Billion Low-Altitude…")*
 
-![](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/ee28d5b222ef4bfcb55af633c4d889e4~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766297870&x-orig-sign=skwGnfwqbi9UHQIIJAU%2F4hzjTtk%3D)
+![](https://tvax1.sinaimg.cn/large/54d349b6gy1i8km2p3ubbj20jg0dwtgj.jpg)
 
 低空经济正在迅猛发展，仅中国国内就预计到 2025 年这一领域的规模将达到 2114.2 亿美元，到 2035 年将达到 4900 亿美元。而全球无人机配送市场预计到 2032 年将达到 85.5 亿美元，年复合增长率将达到 42.7%。但现实情况是，要掌控这个价值万亿的市场，仅仅拥有现成的无人机是不够的，还需要了解从芯片到空域的整个无人驾驶航空系统（UAS，Unmanned Aerial System）架构。
 
@@ -32,7 +32,7 @@ summary: '本文详细介绍了如何通过开源系统和开放硬件打造大�
 
 #### 自动驾驶系统架构：PX4 与 ArduPilot 在量产系统中的比较
 
-![CubePilot无人机自动驾驶系统详细接线图，显示组件连接和配电。来源：https://www.worldronemarket.com/cubepilot-ecosystem-autopilot-wiring-diagram](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/7e7a5fbab88b4488835a9f21e605cefa~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766297870&x-orig-sign=aevd42LEXtBXj2PwE%2F2DwrVS5sY%3D)
+![CubePilot无人机自动驾驶系统详细接线图，显示组件连接和配电。来源：https://www.worldronemarket.com/cubepilot-ecosystem-autopilot-wiring-diagram](https://tvax3.sinaimg.cn/large/54d349b6gy1i8km34wbf0j20jg0pxaju.jpg)
 
 #### 根据实际工程需求选择飞行系统架构
 
@@ -52,7 +52,7 @@ Skylight 无人机系统项目设计决策：采用混合式方案 —— 使用
 
 #### 传感器融合与导航：实现厘米级精度
 
-![示意图展示了无人机如何利用带卫星信号的 RTK GPS 及地面基站进行精确定位](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/43ba3ed84a1c4458b97c48c77964836f~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766297870&x-orig-sign=lPQdth2wSRpSxsQSn4jTLa%2Fao3s%3D)
+![示意图展示了无人机如何利用带卫星信号的 RTK GPS 及地面基站进行精确定位](https://tvax1.sinaimg.cn/large/54d349b6gy1i8km3u2g0wj20jg0cz0ud.jpg)
 
 #### 为什么仅靠 GPS 不够 —— 如何通过传感器融合来解决
 
@@ -83,7 +83,7 @@ Trimble 的 CenterPoint RTX 以及类似的全球校正服务均基于固定不�
 
 #### 地面站与任务规划：操作指挥与控制
 
-![一种坚固的多屏幕无人机地面控制站，带有操纵杆和键盘接口，用于综合无人机操作和遥测监测](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/1431271c4fd04e4d8d05f239a36d5b55~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766297870&x-orig-sign=4riD27MkWjdkIoIf0UhugpkwOt4%3D)
+![一种坚固的多屏幕无人机地面控制站，带有操纵杆和键盘接口，用于综合无人机操作和遥测监测](https://tvax2.sinaimg.cn/large/54d349b6gy1i8km49ibo8j20jg0em43z.jpg)
 
 #### 为何任务规划软件能决定任务成功与否
 
@@ -113,7 +113,7 @@ LTE/5G 面临的挑战：农村地区覆盖不足、网络切换不稳定，以�
 
 # 嵌入式系统与硬件设计：构建大脑
 
-![DFRobot MPU-6050 三轴加速度计和 I2C 陀螺仪传感器模块，用于无人机系统的惯性测量](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/a3c34c884e6f49b79a53088b8e47f502~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766297870&x-orig-sign=x2YAwxvSypjJAaUkUBdWJ5Nmrlg%3D)
+![DFRobot MPU-6050 三轴加速度计和 I2C 陀螺仪传感器模块，用于无人机系统的惯性测量](https://tvax1.sinaimg.cn/large/54d349b6gy1i8km4lylscj20jg0jgjvx.jpg)
 
 #### STM32 与 ESP32：为飞行关键系统选择微控制器
 
@@ -173,7 +173,7 @@ AirPilot 是一种基于 PPO 的 DRL 自动调整非线性 PID 控制器，将�
 
 # 有效载荷控制与定制应用：将硬件转化为解决方案
 
-![](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/8dfe509664c04f32b568e1d634319e03~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766297870&x-orig-sign=y5reQZF2GD69tSfno%2FjWrIXV1PA%3D)
+![](https://tvax2.sinaimg.cn/large/54d349b6gy1i8km4x811aj20jg0czn2t.jpg)
 
 #### 农业喷洒系统：规模化下的 10 厘米精度
 
@@ -209,7 +209,7 @@ Skylight 无人机系统项目采用模块化有效载荷接口，支持摄像�
 
 # BVLOS 操作与合规性：超视距范围飞行。
 
-![](https://p0-xtjj-private.juejin.cn/tos-cn-i-73owjymdk6/9ca1dc81598e479b894c8e5e1654a064~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAg5L-e5Yeh:q75.awebp?policy=eyJ2bSI6MywidWlkIjoiMjkwNzQ3NzY1Mjc0MjIyIn0%3D&rk3s=f64ab15b&x-orig-authkey=f32326d3454f2ac7e96d3d06cdbb035152127018&x-orig-expires=1766297870&x-orig-sign=MNlOyjwcaMnWj7%2FYQkJy3nk219Y%3D)
+![](https://tvax1.sinaimg.cn/large/54d349b6gy1i8km5dg9yxj20jg0cztdf.jpg)
 
 #### 2025 年监管环境将重塑无人机运营模式
 
