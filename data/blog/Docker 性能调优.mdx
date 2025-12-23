@@ -10,7 +10,7 @@ images: []
 
 > *本文介绍了如何利用多维度 Linux 工具进行 Docker 容器性能问题诊断分析及调优，从而充分利用硬件资源，最大化系统资源使用。原文：[Docker Performance Tuning: Resource Bottleneck Identification and CPU/Memory/I/O Optimization](https://jinlow.medium.com/docker-performance-tuning-resource-bottleneck-identification-and-cpu-memory-i-o-optimization-cf021ede8b81 "Docker Performance Tuning: Resource Bottleneck Identification and CPU/Memory/I/O Optimization")*
 
-![](https://tvax2.sinaimg.cn/large/54d349b6gy1i8klqb44pzj20jg0ga7dt.jpg)
+![](https://image.deepnomind.com/blog/image/59e21a1b403fe75258c410c3ba82f3ec)
 
 在现代 Docker 运维框架中，性能调优已成为提升系统效率、降低成本并确保服务水平协议（SLA）合规的关键实践。虽然 Docker 容器化带来了资源隔离和弹性，但也带来了潜在瓶颈，如 CPU 竞争、内存碎片和 I/O 延迟。如果不优化，这些问题可能导致应用响应缓慢、资源浪费和稳定性问题。在生产环境中，性能问题通常源于多因素耦合，需要系统化的瓶颈识别和调优策略。
 
@@ -41,7 +41,7 @@ Sysdig 通过命令提供系统调用级别的可视化，比如 `sysdig -p "%co
 
 集群级监控利用 Prometheus 联邦技术，在分布式环境中汇总节点级指标。Grafana 仪表盘可视化这些聚合，将容器行为与主机资源关联起来，并实现全局优化决策。
 
-![Prometheus 和 Grafana 仪表盘可视化 Kubernetes Nginx Ingress Controller HTTP 请求指标、延迟和连接状态实时数据](https://tvax3.sinaimg.cn/large/54d349b6gy1i8klqr5sdzj20jg0hpn4z.jpg)
+![Prometheus 和 Grafana 仪表盘可视化 Kubernetes Nginx Ingress Controller HTTP 请求指标、延迟和连接状态实时数据](https://image.deepnomind.com/blog/image/ccb3fb622d25ee366a678037cc852174)
 
 #### 系统性瓶颈定位
 

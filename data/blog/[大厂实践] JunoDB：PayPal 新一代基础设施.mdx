@@ -25,7 +25,7 @@ PayPal 不断演变的需求要求支持 CPU 密集型功能，如数据加密�
 
 JunoDB 采用三层代理架构，将客户端应用与物理存储服务器分离，在可扩展性、连接管理和运维效率方面具有显著优势。客户端请求首先被路由到无状态代理层，然后代理层与相应存储服务器通信以执行操作。
 
-![](https://tvax3.sinaimg.cn/large/54d349b6gy1i8km9d2oitj214018g7lq.jpg)
+![](https://image.deepnomind.com/blog/image/594cf7723be2b12dc156ab28f36b64be)
 
 该架构由三个主要组件组成：JunoDB 客户端库、JunoDB 代理和 JunoDB 存储服务器。
 
@@ -63,7 +63,7 @@ JunoDB 设计时在连接层和数据层均实现横向扩展。
 *   **高可用性**：JunoDB 通过积极复制（aggressive replication）实现这一点。存储节点被组织成多个物理位置或“区域”的逻辑组。节点故障时，系统提供自动且瞬时的故障切换，无需复杂的领导人重选流程或数据重分配。代理检查连接失效或超时，无缝的向另一个副本重试请求。
 *   **数据一致性**：在数据中心内，JunoDB 采用基于定额的协议（quorum-based protocol）实现同步复制，确保强一致性。要使读写操作成功，必须在大多数副本之间达成共识。规则是 `Write Quorum (W) + Read Quorum (R) > Number of Replicas (N)`。典型的 PayPal 生产环境配置使用 5 个区域（N=5），写 Quorum 为 3，读 Quorum 为 3，确保每次读取始终看到最新提交的写入数据。跨数据中心复制异步进行，以确保灾难恢复而不影响主集群延迟。
 
-![](https://tvax1.sinaimg.cn/large/54d349b6gy1i8km9r5gwnj214g0qt7gi.jpg)
+![](https://image.deepnomind.com/blog/image/0fae1d81034d212fb2f565200027096d)
 
 # 7. 安全特性
 
@@ -73,7 +73,7 @@ JunoDB 设计时在连接层和数据层均实现横向扩展。
 *   **静态数据**：磁盘上存储的所有数据均加密以防止未经授权访问。
 *   **密钥管理**：专用密钥管理模块负责证书和加密密钥的生命周期，以便密钥自动轮换和安全分发。
 
-![](https://tvax2.sinaimg.cn/large/54d349b6gy1i8kma1gs1uj214g1557gs.jpg)
+![](https://image.deepnomind.com/blog/image/38ab375f2e7038b99a7a0e1c3edc7d80)
 
 # 8. PayPal 使用案例
 

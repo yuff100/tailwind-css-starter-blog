@@ -16,7 +16,7 @@ summary: '本文介绍了 Zalando 如何通过引入路由服务器（RouteSRV�
 
 我们用 [Skipper](https://opensource.zalando.com/skipper "Skipper")（HTTP 反向代理）来实现 [ubernetes Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress "ubernetes Ingress") 和 [RouteGroups](https://opensource.zalando.com/skipper/kubernetes/routegroup-crd "RouteGroups") 的控制平面和数据平面。创建 `Ingress` 或 `RouteGroup` 将会产生[带有 TLS 终止功能的 AWS LB](https://engineering.zalando.com/posts/2025/02/scaling-beyond-limits-harnessing-route-server-for-a-stable-cluster.html#fn:1 "带有 TLS 终止功能的 AWS LB")，该 LB 会通过 [kube-ingress-aws-controller](https://github.com/zalando-incubator/kube-ingress-aws-controller "kube-ingress-aws-controller") 与 Skipper 进行通信，同时在 Skipper 上设置 HTTP 路由，并通过 [external-dns](https://github.com/kubernetes-sigs/external-dns "external-dns") 将 DNS 域名指向该 LB。
 
-![](https://tvax2.sinaimg.cn/large/54d349b6gy1i8km6a1zy0j20jg0cltct.jpg)
+![](https://image.deepnomind.com/blog/image/863b1b16653d6025ad1402085069c8cd)
 
 为了理解部署环境，以下是我们的实际运行规模：
 
@@ -63,7 +63,7 @@ Skipper 实例从 Kubernetes API 获取 Ingress 和 RouteGroups 信息，起初�
 
 集成路由服务器后的最终流程如下：
 
-![](https://tvax3.sinaimg.cn/large/54d349b6gy1i8km6rkxczj20jg0bcn03.jpg)
+![](https://image.deepnomind.com/blog/image/2998bac66be894cf39d6028bc29bfbc1)
 
 # 部署策略
 
@@ -81,7 +81,7 @@ Skipper 实例从 Kubernetes API 获取 Ingress 和 RouteGroups 信息，起初�
 
 默认模式为 `false`，意味着路由服务器已被禁用，此时就用常规的控制平面流量。
 
-![](https://tvax1.sinaimg.cn/large/54d349b6gy1i8km78e4zoj20jg09rq4y.jpg)
+![](https://image.deepnomind.com/blog/image/a0d0ec0c32d90c0428f2536e7acc9739)
 
 #### 预处理模式
 
@@ -95,13 +95,13 @@ Skipper 实例从 Kubernetes API 获取 Ingress 和 RouteGroups 信息，起初�
     ➜ curl -i http://127.0.0.1:9090/routes > routesrv_routes.eskip
     ➜ git diff --no-index -- skipper_routes.eskip routesrv_routes.eskip
 
-![](https://tvax2.sinaimg.cn/large/54d349b6gy1i8km7oyh2mj20jg0bggnz.jpg)
+![](https://image.deepnomind.com/blog/image/d600d9c5fb2ed18dfc810845dca5d80f)
 
 #### 执行模式
 
 在该模式下，路由服务器充当 Skipper 与 Kubernetes API 之间的代理。Skipper 向路由服务器发送请求，然后路由服务器再将这些请求转发至 Kubernetes API。路由服务器会缓存响应并将其返回给 Skipper。此模式是用于生产环境的最终设置。
 
-![](https://tvax1.sinaimg.cn/large/54d349b6gy1i8km8lo6b0j20jg09stap.jpg)
+![](https://image.deepnomind.com/blog/image/04df0af66b542e961ec28ab634035e88)
 
 # 产品上线
 

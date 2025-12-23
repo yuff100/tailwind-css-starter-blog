@@ -8,7 +8,7 @@ summary: '本文介绍了如何基于开源框架并结合 LLM 构建 AI 代理�
 
 > *本文介绍了如何基于开源框架并结合 LLM 构建 AI 代理驱动的自动化测试框架，从而实现更具弹性的自动化测试套件。原文：[AI-Native Test Automation is Here](https://medium.com/google-cloud/ai-native-test-automation-is-here-5b096ac12851)*
 
-![](https://tvax3.sinaimg.cn/large/54d349b6gy1i8klwiawm1j20jg0agdir.jpg)
+![](https://image.deepnomind.com/blog/image/f20ae077447f252bca702f64c36c1c0c)
 
 端到端测试是确保软件质量的最佳实践，但对许多开发者来说仍是痛点。传统框架常常导致测试套件脆弱、维护成本高昂。由于依赖特定选择器，比如 CSS ID，这些选择器在最小的重构中都可能崩溃，从而导致测试不稳定、开发周期缓慢，需要不断追赶开发进度。
 
@@ -26,7 +26,7 @@ browser-use 协调大语言模型与 [Playwright](https://playwright.dev) 控制
 
 这个循环会持续进行，直到代理确认原始任务已完成。browser-use 的一个关键功能是其状态管理。 [代理历史](https://docs.browser-use.com/customize/agent-settings#agent-history)会追踪每一个动作、LLM 的思考过程、访问的网址和截图，提供将在后续报告中使用的审计轨迹。
 
-![](https://tvax1.sinaimg.cn/large/54d349b6gy1i8klxgrutjj20jg0ayabv.jpg)
+![](https://image.deepnomind.com/blog/image/01eba5e6e46747a0409d0d28536a2a0c)
 
 #### 工作原理
 
@@ -66,7 +66,7 @@ def test_always_passes():
 
 以用这个命令从终端运行：`pytest`
 
-![](https://tvax4.sinaimg.cn/large/54d349b6gy1i8klxvd616j20jg0ay763.jpg)
+![](https://image.deepnomind.com/blog/image/a618173452ffc3fc88876bc6738aff49)
 
 #### pytest 关键概念
 
@@ -115,7 +115,7 @@ pytest 和 Allure 通过 [allure-pytest](https://pypi.org/project/allure-pytest)
 
 对于每个事件和附件，Allure 会在 `--alluredir` 命令行选项指定的目录中生成对应的 JSON 或附件文件。这个原始结果文件文件夹是 Allure 命令行工具用来生成最终精致的 HTML 报告的通用数据格式。
 
-![](https://tvax3.sinaimg.cn/large/54d349b6gy1i8kly8wg8hj20jg0ay76s.jpg)
+![](https://image.deepnomind.com/blog/image/2c4c33cc1e424d7d6ff252b7788e55b4)
 
 Allure 的功能使我们能够结构化并丰富本报告：
 
@@ -136,7 +136,7 @@ Allure 的功能使我们能够结构化并丰富本报告：
 
 刚刚介绍的每个组件都可以集成到端到端架构中：
 
-![](https://tvax1.sinaimg.cn/large/54d349b6gy1i8klyle02yj20jg0agn0l.jpg)
+![](https://image.deepnomind.com/blog/image/81de84cad53a11f4a8b55bd92b7c406d)
 
 #### 测试启动与编排（pytest）
 
@@ -160,7 +160,7 @@ Allure 的功能使我们能够结构化并丰富本报告：
 
 为观察这些概念如何转化为现实场景，AgentiTest 仓库包含示例测试文件 `test_community_website.py`，该套件测试[谷歌云社区](https://www.googlecloudcommunity.com/)官网，这是个允许用户、合作伙伴和谷歌员工提问并协作的公开论坛。
 
-![](https://tvax3.sinaimg.cn/large/54d349b6gy1i8klywnnyej20jg0aydi2.jpg)
+![](https://image.deepnomind.com/blog/image/ef5097665266281b3b7ee910b6d0a218)
 
 这些示例测试旨在验证面向用户的功能，对非技术利益相关者来说直观易懂。测试套件检查两个主要区域：
 
