@@ -24,6 +24,12 @@ const projectsData: Project[] = [
     imgSrc: '/static/images/image-bed.png',
     href: 'https://image-bed.deepnomind.com/',
   },
+  {
+    title: '微信公众号文章转Markdown Demo',
+    description: '支持将微信公众号文章转换为Markdown格式，方便内容管理和发布。',
+    imgSrc: '/static/images/wechat-to-markdown.png',
+    href: 'https://w2m.deepnomind.com/',
+  },
 ]
 
 export default projectsData
