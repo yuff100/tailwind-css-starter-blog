@@ -16,7 +16,7 @@ const Image = ({ src, alt, ...rest }: ImageProps) => {
           style={{ maxWidth: '100%', height: 'auto' }}
         />
         {alt && (
-          <figcaption className="mt-2 text-center text-sm italic text-gray-600 dark:text-gray-400">
+          <figcaption className="mt-2 text-center text-sm text-gray-600 italic dark:text-gray-400">
             {alt}
           </figcaption>
         )}
