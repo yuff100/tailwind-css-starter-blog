@@ -8,22 +8,22 @@ const Image = ({ src, alt, ...rest }: ImageProps) => {
     return (
       <figure className="my-6">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img 
-          src={src} 
-          alt={alt} 
+        <img
+          src={src}
+          alt={alt}
           loading="lazy"
           className="mx-auto rounded-lg"
           style={{ maxWidth: '100%', height: 'auto' }}
         />
         {alt && (
-          <figcaption className="mt-2 text-center text-sm text-gray-600 dark:text-gray-400 italic">
+          <figcaption className="mt-2 text-center text-sm italic text-gray-600 dark:text-gray-400">
             {alt}
           </figcaption>
         )}
       </figure>
     )
   }
-  
+
   return <NextImage src={`${basePath || ''}${src}`} alt={alt || ''} {...rest} />
 }
 
