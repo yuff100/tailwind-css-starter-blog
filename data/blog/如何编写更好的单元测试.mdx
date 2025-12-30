@@ -1,0 +1,361 @@
+---
+title: '如何编写更好的单元测试'
+date: '2025-4-1'
+tags: ['软件测试']
+draft: false
+summary: '本文介绍了 Graphite 改善测试文化，提高测试质量的过程中的经验，有助于致力于改善项目测试的团队思考如何采取步骤改进产品的测试。'
+---
+
+>*本文介绍了 Graphite 改善测试文化，提高测试质量的过程中的经验，有助于致力于改善项目测试的团队思考如何采取步骤改进产品的测试。原文：[Going from 0 to 1: How to write better unit tests when there are none](https://graphite.dev/blog/how-to-write-better-unit-tests "Going from 0 to 1: How to write better unit tests when there are none")*
+
+当我加入 Graphite 时，整个代码库中几乎没有测试。团队的五名工程师中有三人之前在 Meta 工作，并且已经将那里糟糕的测试文化当成了习惯。
+
+在接下来两年时间里，我们慢慢改变了公司的测试文化。现在，令人高兴的是，大多数 PR（但不是全部）都带有测试。
+
+然而，当我们编写越来越多测试时，又出现了新问题：测试架构太糟糕了。
+
+#### 糟糕测试架构的陷阱
+
+我发现在工程师中有些事情是共识：
+
+1. 有测试总比没有好。
+2. 因为测试用户不像生产环境真实用户那样交互，测试代码的质量就不那么重要了，只要能测试代码就够了。
+
+最终结果是，当引入测试时（就像在 Graphite 中那样），很容易编写出意大利面条式的测试代码。
+
+但那又怎样？如果测试代码在技术上没有用于生产环境，为什么代码质量很重要？
+
+最近，我在重读 *代码整洁之道（Clean Code）* 时，发现 [Bob 大叔](http://www.cleancoder.com/products "Bob 大叔")写的一个很好的故事，解释了这一陷阱：
+
+>几年前，我被邀请去指导某个团队，他们明确规定，测试代码不需要保持与生产环境代码相同的质量标准，他们允许彼此在单元测试中打破规则。“又快又脏”是他们的口号。只要测试代码能正常工作，并且测试能够覆盖生产代码，就足够了。
+>
+>这个团队没有意识到的是，脏测试等同于没有测试，甚至比没有测试更糟。问题是测试必须随着生产代码的发展而改变。测试越脏，就越难改变。测试代码越复杂，就越有可能花费比编写新的生产代码更多的时间在套件中塞入新测试。当修改生产代码时，旧测试开始失败，测试代码中的混乱使得这些测试很难再次通过。因此，测试被视为一种不断增加的负担。
+>
+>从一个版本到另一个版本，维护测试套件的成本不断上升。当经理问是什么原因导致工作量估算变得如此之大时，开发人员将其归咎于测试。最后，他们被迫完全放弃测试套件。
+>
+>但是，如果没有测试套件，就失去了确保代码变更按预期工作的能力。因此缺陷率开始上升。随着意外缺陷数量的增加，他们开始害怕进行更改，生产环境代码开始腐烂。最终没有测试的生产代码混乱且问题百出，客户感到沮丧，感觉是测试工作造成了他们的失败。
+
+重新审视之前的观点，我仍然同意有测试总比没有测试要好。然而，大多数工程师忽略的是 Bob 大叔在故事中所强调的：测试的关键是测试本身的架构以及随后的可维护性。
+
+#### 迈向更好的测试
+
+随着我们在 Graphite 的代码库中添加更多测试，我发现自己在代码审查中一遍又一遍的重复许多相同的建议，并开始基于相同的反馈重构许多旧测试。
+
+以下是我在内部分享的一些技巧，以帮助改进测试架构。
+
+##### 技巧1：清理底层代码可以帮助创建更简洁的测试
+
+就像许多初创公司竞相发布产品一样，在 Graphite 公司，编写代码时没有考虑测试，结果是大量大型函数交织在核心业务逻辑中并产生大量副作用。
+
+例如，考虑下面的简化方法，类似于我们经常使用的代码。该方法确定是否需要合并 PR，如果需要，则调用 GitHub API 进行合并，然后通过 Slack 发送通知：
+
+```javascript
+async function mergePr(pr: Pr, context: Context) {
+  if (!ciIsPassing(pr)) {
+    await context.githubApi.comment.mergeFailed(pr, 'MISSING_REQUIRED_CI');
+    throw new MergeFailedError();
+  }
+
+if (!prHasRequiredApprovers(pr)) {
+  await context.githubApi.comment.mergeFailed(pr, 'MISSING_REQUIRED_APPROVERS');
+  throw new MergeFailedError();
+  }
+
+  await context.githubApi.mergePr(pr);
+  await context.sendMergedSlackNotification(pr);
+}
+```
+
+上述方法的对应测试用例可能如下所示：
+
+```javascript
+it("A PR with passing required CI and required approvers merges", () => {
+  const pr = {
+    org: "withgraphite",
+    repo: "backend",
+    number: 1,
+    requiredCi: [...],
+    requiredApprovers: [...],
+  };
+  
+  const mergePr = sinon.fake(),
+  const context = {
+	  githubApi: {
+		  comment: sinon.fake(),
+		  mergePr,
+		},
+		sendMergedSlackNotification,
+  };
+  
+  await mergePr(context, pr);
+  expect(mergePr.calledOnce).to.be.true;  
+});
+```
+
+在这个简化例子中，测试本身还算不错，但还是有一些异味。
+
+- 有很多设置，尤其是那些打桩。这个示例分散了测试用例的焦点，使读者很难一眼就看出测试用例做了什么。
+
+- 打桩也增加了维护负担。考虑这样一种情况，我们稍后将扩展 `mergePr` 方法，在 PR 无法合并时也发送 Slack 通知。上面的测试用例将需要添加一个新的桩，即使它并没有测试此代码路径。
+
+- 考虑到我们想添加额外测试用例来测试当 PR 可以合并时会发生什么（即 `mergePr` 和 `sendMergedSlackNotification`）的情况。在这个测试用例中，需要提供一个通过所有合并需求的测试 PR，如果我们稍后扩展合并需求，这个 PR 和测试用例可能也需要更新，即使我们真正想测试的是合并的副作用。
+
+我们可以做得更好。正如之前提到的，这里的问题是架构问题。我经常发现，当测试难以编写时，代码本身的设计就很糟糕。
+
+在后面的代码版本中，我对其进行了重构，使用[命令/查询分离模式](https://www.martinfowler.com/bliki/CommandQuerySeparation.html "命令/查询分离模式")将纯逻辑从副作用中分离出来，这么做的效果很好，使每个方法更小，更集中。
+
+```javascript
+function prMergeBlockers(pr: Pr) {
+  const mergeBlockers = [];
+
+  if (!ciIsPassing(pr)) {
+    mergeBlockers.push('MISSING_REQUIRED_CI');
+  }
+  if (!prHasRequiredApprovers(pr)) {
+    mergeBlockers.push('MISSING_REQUIRED_APPROVERS');
+  }
+
+  return mergeBlockers;
+}
+
+function mergePrIfPossible(pr: Pr, context: Context) {
+  const mergeBlockers = prMergeBlockers(pr);
+  if (mergeBlockers.length > 0) {
+    await githubApi.comment.mergeFailed(pr, mergeBlockers);
+  }
+
+  mergePr(context, pr);
+}
+
+function mergePr(pr: Pr, context: Context) {
+  await context.githubApi.mergePr(pr);
+  await context.sendMergedSlackNotification(pr);
+}
+```
+
+之前的测试用例现在看起来像这样：
+
+```javascript
+it("A PR with passing required CI and required approvers merges", () => {
+  const pr = {
+    org: "withgraphite",
+    repo: "backend",
+    number: 1,
+    requiredCi: [...],
+    requiredApprovers: [...],
+  };
+  
+  const mergeBlockers = prMergeBlockers(pr);
+  
+  expect(mergeBlockers.length).to.be.equal(0);
+});
+```
+
+测试之前版本的代码时发现的问题现在已经消失了：
+
+- `prMergeBlockers` 函数允许我们在不打桩任何东西的情况下测试合并阻塞程序逻辑。
+
+- 如果想测试合并的副作用，可以直接调用 `mergePr`。
+
+额外的好处是，新代码也更容易理解。
+
+在 Graphite 的例子中，随着我们将更多生产代码重构为这种模式，注意到在测试套件的执行中也可以进行相应的加速。在我们的测试中，数据库相关的副作用是通过在测试容器中运行一个真实的 Postgres 实例来测试的。通过尽可能重构逻辑和测试，可以减少访问数据库的次数。
+
+##### 技巧2：考虑使用领域特定语言
+
+在之前改进的测试用例中，有一些东西仍然困扰着我：测试用例中的 9 行代码中，有 7 行专门用于创建假 PR 对象。
+
+```javascript
+const pr = {
+  org: "withgraphite",
+  repo: "backend",
+  number: 1,
+  requiredCi: [...],
+  requiredApprovers: [...],
+};
+const mergeBlockers = prMergeBlockers(pr);
+expect(mergeBlockers.length).to.be.equal(0);
+```
+
+这偏离了测试的重点,读者需要关心的是，此 PR 通过了所需的 CI，并拥有所需的一组审批人。读者实际上并不关心 PR 所在的特定组织或存储库，在最差情况下，这些只会转移注意力，实际上不会影响测试的结果。
+
+我最近喜欢的一种模式是使用轻量级领域特定语言来帮助构建测试对象。
+
+在我们的例子中，这类似于一个基本的构建器，可以转换为前面的对象：
+
+```javascript
+// Now the test contains just what we care about!
+const pr = new Pr()
+  .withRequiredCi()
+  .withRequiredApprovers();
+const mergeBlockers = prMergeBlockers(pr);
+expect(mergeBlockers.length).to.be.equal(0);
+```
+
+这里的示例相对基本，但在我们的代码库中有复杂关系的情况下，这帮助我们删除了大量样板代码。
+
+我们在 Graphite 测试的一个常见概念涉及创建一个具有依赖关系的 PR 图。在我们的测试中，将其简化为节点和边的列表，依靠辅助函数来完成构建实际图的工作。
+
+```javascript
+nodes: [{ prNumber: 123 }, { prNumber: 5000 }, { prNumber: 314 }],
+edges: [
+  [{ prNumber: 123 }, { prNumber: 5000, parentPrNumber: 123 }],
+],
+```
+
+这些小的辅助函数在断言层也很有用。测试中我们可以这样写：
+
+```javascript
+assertEntriesAre({
+  actual: entries,
+  expected: [
+    { prNumber: 13, status: "PENDING" },
+    { prNumber: 42, status: "PENDING" },
+    { prNumber: 314, status: "PENDING" },
+    { prNumber: 500, status: "PENDING" },
+  ],
+});
+```
+
+这可以让读者专注于高层，而隐藏其中不太有趣的实现。
+
+```javascript
+const assertEntriesAre = ({
+  actual,
+  expected,
+}: {
+  actual: TMergeQueue;
+  expected: { prNumber: number; status: TMqEntryStatus }[];
+}) => {
+  expect(
+    actual.map((entry) => ({
+      prNumber: entry.githubPr.number,
+      status: entry.status,
+    }))
+  ).to.deep.eq(expected);
+};
+```
+
+##### 技巧3：尝试将测试参数化
+
+单个测试用例现在简洁且易于阅读，突出了特定测试用例的独特之处，让读者可以只关注需要知道的内容。
+
+```javascript
+it("A PR with passing required CI and required approvers merges", () => {
+  const pr = new Pr()
+    .withRequiredCi()
+    .withRequiredApprovers();
+    
+  const mergeBlockers = prMergeBlockers(pr);
+  
+  expect(mergeBlockers.length).to.be.equal(0);
+});
+```
+
+考虑添加另一个测试用例，我们希望确保如果 PR CI 失败，就不会被合并。
+
+```javascript
+it("PR with passing required CI and required approvers merges", () => {
+  const pr = new Pr()
+    .withRequiredCi()
+    .withRequiredApprovers();
+    
+  const mergeBlockers = prMergeBlockers(pr);
+  
+  expect(mergeBlockers.length).to.be.equal(0);
+});
+
+// Our new test case
+it("PR with required approvers but *without* required CI does not merge", () => {
+  const pr = new Pr()
+    .withRequiredApprovers()
+    .withoutRequiredCi();
+    
+  const mergeBlockers = prMergeBlockers(pr);
+  
+  expect(mergeBlockers).to.contain('MISSING_REQUIRED_CI');
+});
+```
+
+这样可以完成工作，但是有一些重复代码，并且很难一眼看出每个测试用例的独特之处。
+
+我们重构一下测试，明确显示参数化：
+
+```javascript
+[
+  {
+    desc: "A PR with passing required CI and required approvers merges",
+    pr: new Pr()
+      .withRequiredCi()
+      .withRequiredApprovers(),
+    mergeBlockers: [],
+  },
+  {
+    desc: "PR with required approvers but *without* required CI does not merge",
+    pr: new Pr()
+      .withRequiredApprovers()
+      .withoutRequiredCi(),
+    mergeBlockers: ['MISSING_REQUIRED_CI'],
+  },
+].forEach((tc) => {
+  it(
+    tc.desc,
+    () => {
+      const mergeBlockers = prMergeBlockers(pr);
+      
+      expect(mergeBlockers).to.deep.eq(tc.mergeBlockers);
+    }
+  )
+});
+```
+
+现在更容易看到每种情况的独特之处（参数和预期输出）以及共享之处（对 `prMergeBlockers` 的调用）。
+
+扩展此测试以添加新测试用例或修改给定输入的输出现在也只是一个小更改，更易于创建和评审。
+
+```javascript
+    ...
++   {
++     desc: "PR with required CI but *without required approvers does not merge",
++     pr: new Pr()
++       .withRequiredCi()
++       .withoutRequiredApprovers(),
++     mergeBlockers: ['MISSING_REQUIRED_APPROVERS'],
++   },
+    ...
+```
+
+##### 技巧4：设计测试时要考虑失败
+
+当测试通过时，工程师通常会忽略它们，只有当测试开始失败时，才会有人开始调查到底发生了什么。
+
+因此，第一个接触点是测试失败消息。在编写测试时，应该考虑可能向未来的工程师显示的失败消息，并考虑如何使其尽可能清晰和可行。
+
+考虑下面的一组检查，断言数组包含两个元素，PR #42和PR #500：
+
+```javascript
+expect(entries.length).to.be.eq(2);
+
+const entriesSet = new Set(entries.map((e) => e.githubPr.number));
+expect(entriesSet).to.not.contain(childPrNumber);
+expect(entriesSet).to.not.contain(childPrNumber2);
+
+expect(entriesSet).to.contain(42);
+expect(entriesSet).to.contain(500);
+```
+
+如果数组 `entries` 返回 3 项而不是预期的 2 项，那么测试在第一个断言上就会失败，通知我们 `entries` 数组的长度是 3 而不是 2。
+
+工程师调试的时候可能会先修改测试，输出返回的条目列表（尝试了解数组中包含哪些条目），随后重新运行测试，然后检查结果。
+
+如果我们能预料到这是一种常见的调试模式，那么就可以并且应该在测试用例中做得更好。将上述检查替换为更简洁的单个检查，可以帮助未来的工程师跳过额外的调试步骤：
+
+```javascript
+expect(entries.map(e => e.githubPr.number)).to.deep.eq([42, 500]);
+```
+
+#### 结论
+
+我在 Graphite 工作期间，已经能够通过这样的努力稳步提升测试文化。虽然这种改变需要很多年，但我发现，随着时间推移，稳定的努力和耐心会得到回报。希望这些技巧也可以帮助你和你的团队改进测试方法。
+
+测试快乐!
