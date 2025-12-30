@@ -1,0 +1,228 @@
+---
+title: '用 AI 革新软件测试'
+date: '2025-4-23'
+tags: ['软件测试','人工智能']
+draft: false
+summary: '本文介绍了将自动化测试、AI和CICD集成在一起，创建AI驱动的无缝测试环境的新框架Shortest，研发团队可以借助该框架用AI赋能自动化测试，进一步保证产品质量。'
+---
+
+>*本文介绍了将自动化测试、AI和CICD集成在一起，创建AI驱动的无缝测试环境的新框架Shortest，研发团队可以借助该框架用AI赋能自动化测试，进一步保证产品质量。原文：[Revolutionizing Software Testing with AI: The Shortest Framework](https://medium.com/ai-simplified-in-plain-english/revolutionizing-software-testing-with-ai-the-shortest-framework-c42bb7ad7917 "Revolutionizing Software Testing with AI: The Shortest Framework")*
+
+#### 前言
+
+软件测试通常被视为单调乏味的例行工作，但不可否认，测试对于确保应用按预期运行至关重要。随着技术演进，软件测试也在不断发展。如今，集成了 AI 的自动化框架正在改变软件测试的格局，提高测试效率和准确性。*Shortest Framework* 就是这样一个突破，它将 Playwright、Anthropic Claude AI、GitHub 和 Mailosaur 结合在一起，创建了一个无缝测试环境。本文将探讨这一创新框架的工作原理、其与众不同之处，以及为什么它能彻底改变致力于质量的团队的软件测试。
+
+#### 核心架构和关键组件
+
+*Shortest Framework* 由多个复杂组件组成，每个组件都能增强测试流程的不同方面。我们深入了解一下核心功能：
+
+##### A) 🚀 Playwright
+
+Playwright 是 Shortest 自动化功能的支柱，提供了直观的多浏览器测试引擎，可在各种平台上运行。
+
+- **跨浏览器支持**：在 Chromium、Firefox 和 WebKit 上进行无缝测试。
+- **平台兼容性**：可在 Windows、Linux 和 macOS 环境中完美运行。
+- **自动等待**：通过智能处理动态内容，最大限度减少不稳定的测试。
+- **无头和有头模式**：为 CI/CD 流水线提供快速的无头执行，同时允许在必要时进行详细调试。
+- **网络拦截**：让测试人员能够修改请求并分析响应，以实现更深入的测试覆盖。
+
+##### B) 🤖 Anthropic Claude AI
+
+Claude AI 支持通过自然语言创建测试用例，从而增强了软件测试功能。
+
+- **低学习曲线**：将自然语言描述转换为可执行脚本，让没有丰富编码知识的用户也能使用。
+- **智能执行**：Claude AI 不只是生成测试用例，还会随着时间推移不断调整，从以前的测试中吸取经验教训，以提高准确性。
+- **自适应学习**：每次迭代都有助于改进测试逻辑，使未来的执行更精确、更快速。
+
+##### C) 🔗 GitHub 集成：简化 CI/CD 流水线
+
+通过集成 GitHub 的强大功能，Shortest 可无缝集成到现代 DevOps 工作流中，优化 CI/CD 流程。
+
+- **持续集成 (CI)**：在提交代码时自动触发测试，确保持续的质量保证。
+- **版本控制**：使测试脚本和配置与项目开发周期保持同步。
+- **安全性**：实施双因子身份验证 (2FA)，确保测试环境安全。
+
+##### D) 📧 Mailosaur：全面的电子邮件测试
+
+Mailosaur 可自动测试电子邮件工作流程，确保关键的用户通信（如注册电子邮件和密码重置）按预期运行。
+
+- **端到端电子邮件验证**：确保准确接收和解析电子邮件，包括事务性电子邮件。
+- **MFA 和 OTP 测试**：验证多因子身份验证 (MFA) 和一次性密码 (OTP)，确保安全功能完美运行。
+- **真实的电子邮件交互**：在自动化测试中模拟真实的电子邮件交互，在真实环境中验证工作流程。
+
+#### ⚡ 为什么 AI 和自动化是软件测试的未来？
+
+##### A) 📝 AI 驱动的自然语言测试编写
+
+借助 Claude AI，测试创建被简化到非技术利益相关者也能做出贡献的程度。通过使用自然语言编写测试，团队可以绕过对大量编码知识的需求。
+
+- **测试民主化**：让产品经理、设计师和非开发人员为自动化做出贡献。
+- **更快的创建测试**：最大限度减少手动编写详细测试脚本所需的时间。
+
+##### B) ⚡ 高度自动化的测试执行
+
+AI 驱动的自动化可减少人工干预，确保测试的结构化和可重复性，从而提高效率。
+
+- **提高可靠性**：自动化减少了人为错误，使测试更加可靠和一致。
+- **更快的发布周期**：通过加快测试的执行速度，自动化可促进更频繁、更快速的发布，这对敏捷团队至关重要。
+
+##### C) 🌐 跨浏览器和设备兼容性
+
+Playwright 广泛覆盖多种浏览器和设备，确保应用程序的稳定性和流畅的用户体验。
+
+- **增强用户体验**：验证不同环境下的功能。
+- **降低生产风险**：在部署前检测问题，最大限度减少意外故障。
+
+##### D) 🔐 安全第一的测试方法 
+
+借助 GitHub 的 CI/CD 集成和 2FA 支持，安全性仍然是自动化测试环境中的优先事项。
+
+- **保护敏感数据**：确保测试环境的安全。
+- **防止未经授权的访问**：加强身份验证机制，保护关键工作流程。
+
+#### 🎮 设置测试环境
+
+在开始创建测试之前，需要配置测试环境。以下是在系统中设置 Shortest 的简单指南。
+
+##### 🛠 安装
+
+要安装 Shortest，请使用以下软件包管理器之一：
+
+```bash
+npm install @antiwork/shortest
+# Or use pnpm
+pnpm add @antiwork/shortest
+# Or use yarn
+yarn add @antiwork/shortest
+```
+
+##### 🛡️ 配置框架
+
+在项目根目录下创建 `shortest.config.ts` 文件：
+
+```js
+const config: ShortestConfig = {
+  baseUrl: 'http://localhost:3000', // 被测应用的 URL
+  testDir: 'app/__tests__', // 包含测试用例的目录
+  anthropicKey: process.env.ANTHROPIC_API_KEY // 用于外部集成的 API key
+};
+export default config;
+```
+
+##### 编写第一个测试用例
+
+编写一个简单的测试用例来检查应用程序的登录功能。
+
+**🔐 实现登录测试**
+
+在 `app/__tests__` 目录中创建新文件 `login.test.ts`，并添加以下代码：
+
+```js
+import { shortest } from '@antiwork/shortest';
+
+shortest('User can log in with email and password', {
+  username: process.env.GITHUB_USERNAME,
+  password: process.env.GITHUB_PASSWORD
+});
+```
+
+该测试用例验证用户是否能使用正确的凭证登录。
+
+##### 🏋️ 高效运行测试
+
+测试用例编写完成后，可以使用以下命令执行：
+
+```bash
+shortest # 执行所有测试
+shortest login.test.ts # 执行特定测试文件
+shortest --headless # 通过命令行以无头模式执行测试
+```
+
+在无头模式下运行测试对 CI/CD 流水线特别有用，可以在没有图形界面的情况下进行自动检查。
+
+##### 🧪 用附加断言增强测试
+
+在实际应用中，附加逻辑和断言有助于验证关键工作流。可以通过添加回调函数来增强测试用例：
+
+```js
+import { shortest } from "@antiwork/shortest";
+import { db } from "@/lib/db/drizzle";
+import { users } from "@/lib/db/schema";
+
+shortest("Login verification", {
+  username: process.env.USERNAME,
+  password: process.env.PASSWORD,
+}).after(async ({ page }) => {
+  const clerkId = await page.evaluate(() => {
+    // Additional assertions and logic go here
+  });
+});
+```
+
+这种方法可确保在登录后正确更新应用状态，并正确处理用户身份验证。
+
+#### 项目结构
+
+**A) 📂 src/** - 核心源代码，按模块（控制器、服务、模型）组织。
+
+**B) 📖 docs/** - 包含 API 文档、开发指南和测试用例参考。
+
+**C) 🧪 tests/** - 单元测试和集成测试目录。
+
+**D) 🚫 .gitignore** - 从版本控制中排除不必要的文件。
+
+**E) 📜 README.md** - 高级概述和设置说明
+
+#### 性能考虑因素和衡量标准
+
+##### A) 📊 评估 Playwright 的效率
+
+Playwright 提供强大的性能分析工具，包括：
+
+- **页面加载指标（Page Load Metrics）**：使用 performance.timing API 监控关键加载时间。
+- **资源利用率（Resource Utilization）**：跟踪网络请求、内存使用和 CPU 消耗。
+- **响应延迟（Response Latency）**：测量服务器响应时间，以确定潜在的后端问题。
+- **错误率和吞吐量（Error Rates & Throughput）**：评估高负载下的系统稳定性。
+
+##### B) 💡 Anthropic Claude AI 驱动测试准确性
+
+虽然 Claude AI 的具体准确性基准测试没有公开记录，但其代码解释、测试自动化和错误检测能力已在多个 AI 基准测试中显示出卓越的效果，包括
+
+- **SWE-bench 验证**：软件工程任务成功率高
+- **HumanEval 和 TAU-bench**：在代码准确性方面优于同类人工智能模型。
+
+##### C)📨 Mailosaur 的电子邮件验证功效
+
+Mailosaur 确保通过以下方式进行真实的电子邮件测试：
+
+- **虚拟 SMTP 服务器**：在测试环境中模拟电子邮件事务。
+- **AI 增强验证**：利用模式识别来检测潜在的交付问题。
+- **MFA 和 OTP 安全测试**：确保登录和身份验证机制按预期运行。
+
+#### 功能
+
+- 🤖 AI 驱动测试
+
+Shortest 与 Anthropic Claude AI 无缝集成，提高了测试的准确性和一致性。通过解释自然语言描述，AI 可将其转换为可执行代码，从而降低编写测试的复杂性。
+
+- 📧 自动化电子邮件验证 
+
+许多应用程序都依赖电子邮件工作流（如用户注册、密码重置）。Shortest 与 Mailosaur 集成，实现了电子邮件功能的无缝测试。该集成可自动发送和接收电子邮件，确保关键工作流正常运行，无需人工干预。
+
+- 🌍 跨平台测试
+
+在当今世界，确保跨多个平台的一致性是必要的。使用 Shortest，可以在各种浏览器（Chrome、Firefox、Safari）和设备（台式机、移动设备）上运行测试。这种跨平台支持可确保应用程序提供一致的用户体验。
+
+- 🔒 高安全性场景
+
+对于登录系统和支付网关等高安全性环境的测试，Shortest 功不可没。通过内置的双因子身份验证 (2FA) 支持，可以放心测试敏感的工作流程。
+
+- 🏃‍♂️ 通过快速迭代加速开发
+
+快速运行测试和频繁迭代的能力在敏捷环境中至关重要。Shortest 在设计时充分考虑了速度，允许开发人员快速执行测试并实时完善代码。
+
+#### 结论
+
+Shortest 框架结合了 Playwright 的自动化、Claude AI 的自然语言处理、GitHub 的 CI/CD 集成和 Mailosaur 的电子邮件验证，重新定义了端到端测试。这种人工智能驱动、可扩展和安全的测试解决方案使团队能够放心的开发、部署和维护软件。
+
+由于现代开发周期要求速度、准确性和安全性，Shortest 提供了一种全面的质量保证方法，使开发人员、测试人员和产品团队能够在统一的框架内无缝工作。
