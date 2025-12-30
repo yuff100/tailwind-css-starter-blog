@@ -6,7 +6,7 @@ const Image = ({ src, alt, ...rest }: ImageProps) => {
   // For external images or images without explicit dimensions, use regular img tag
   if (typeof src === 'string' && (src.startsWith('http://') || src.startsWith('https://'))) {
     return (
-      <span className="block my-6">
+      <span className="my-6 block">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={src}
@@ -16,7 +16,7 @@ const Image = ({ src, alt, ...rest }: ImageProps) => {
           style={{ maxWidth: '100%', height: 'auto' }}
         />
         {alt && (
-          <span className="block mt-2 text-center text-sm text-gray-600 italic dark:text-gray-400">
+          <span className="mt-2 block text-center text-sm text-gray-600 italic dark:text-gray-400">
             {alt}
           </span>
         )}
