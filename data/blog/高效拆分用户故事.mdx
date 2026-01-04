@@ -1,0 +1,193 @@
+---
+title: '高效拆分用户故事'
+date: '2025-06-01'
+tags: ['敏捷开发']
+draft: false
+summary: '用户故事是敏捷实践的核心概念之一，对于大型项目来说，用户故事往往较大，无法在一个 Sprint 内完成，因此本文介绍了用户故事拆分方法，可以帮助我们将用户故事拆分成若干小的、可以在 Sprint 内完成的用户故事。'
+---
+
+>*用户故事是敏捷实践的核心概念之一，对于大型项目来说，用户故事往往较大，无法在一个 Sprint 内完成，因此本文介绍了用户故事拆分方法，可以帮助我们将用户故事拆分成若干小的、可以在 Sprint 内完成的用户故事。原文：[How to Split a Big User Story Effectively](https://medium.com/beyond-agile-leadership/how-to-split-a-big-user-story-effectively-44bb14e7afbe "How to Split a Big User Story Effectively")*
+
+![](https://image.deepnomind.com/blog/image/3a237c43ed6c2d9eccfd06f234b1f8e1)
+
+在敏捷开发中，用户故事代表了产品的待办工作项（PBI，Product Backlog Item），在每个 Sprint 中都必须交付一定的用户故事。敏捷最重要的实践就是持续的迭代交付，从而有别于传统的瀑布式管理。由于用户故事是可交付的核心内容，因此往往太大而无法在一个 Sprint 内交付。本文将解释如何有效拆分大型用户故事，从而可以有效实践持续迭代的交付，以获得客户满意度。虽然本文主要和敏捷相关，但其内容也可以应用于瀑布式管理。
+
+#### 产品待办列表简介
+
+首先解释一下产品待办列表及其层次结构。在敏捷开发中，产品待办列表是一个独立工件，整合了与产品相关的所有信息，如需求、估算、沟通等。在传统瀑布式管理中，不存在这种概念，所有信息都是分散的，导致组织混乱。为简单起见，组织里的每个人都可以访问产品待办列表，使管理变得更容易。产品待办列表有四个层次结构：主题（Theme）、史诗（Epic）、用户故事（User Story）和任务（Task）。(有些人认为还应该包括第五层的动机。然而，根据我的经验和研究，四层似乎更常见)。每一层的任务称为一个产品待办列表项（Product Backlog Item，简称PBI），表示产品待办列表中的一项工作。
+
+- 主题（Theme）代表一个跨越几个月到几年的长期产品策略。
+- 史诗（Epic）具有巨大价值，影响商业投资，需要在多个 Sprint 内完成。
+- 对于最终用户来说，用户故事（User Story）是每一轮 Sprint 应该交付的最小可交付单元。
+- 任务（Task）是将用户故事分解为可以在几天内完成的工作。
+
+![](https://image.deepnomind.com/blog/image/2a2ccc9459a339690917d39cb38a468c)
+
+#### 用户故事概述
+
+在敏捷开发中，术语“用户故事”有两种不同含义：一种 PBI 类型以及描述需求摘要的句子。用户故事（PBI 类型）位于 Epic 和 Task 之间的第三层，是敏捷开发的核心可交付产品。这里的关键实践是，用户故事应该足够小，可以在 Sprint 内完成。如果团队将 Sprint 时间设定为两周，那么用户故事应该足够小，可以在两周内完成。恒定、一致和迭代的交付是敏捷的关键实践。
+
+用户故事（PBI）包含定义需求的三个基本元素：用户故事（句子）、验收标准和视觉图像，其中验收标准是拆分用户故事的关键元素。用户故事（句子）描述的是产品的服务对象是谁、他为什么需要这个产品以及他能获得什么。下面是一个例子。
+
+>作为用户（谁），我想用邮箱地址和密码（什么）登录平台，这样我就可以安全的使用平台（为什么）。
+
+视觉图像可以是草图、原型或复杂的设计，以支持共同的理解和提示对话。用户故事和验收标准是基于文本的表达，视觉图像可以帮助人们想象软件应该如何呈现。
+
+![](https://image.deepnomind.com/blog/image/08e633fb857ee51e9636b4624981ac1e)
+
+#### 验收标准
+
+验收标准是有效编写详细需求的敏捷最佳实践之一。在完成 PBI 并执行验收测试之前，必须满足这些要求。明确的验收标准是有效切分大型用户故事的关键。
+
+##### Gherkin 语法
+
+虽然有几种不同的验收标准定义格式，但 Cucumber 创始人 Aslak Hellesøy 创建的 [Gherkin 语法](https://cucumber.io/docs/gherkin/reference/ "Gherkin 语法")是最严格、最可信的澄清需求和控制质量的方式。Gherkin 语法由四个简单的元素组成：场景（Scenrio）、给定（Given）、当……（When）和然后（Then），描述了软件应该如何表现。该框架全面涵盖了软件行为的所有必要方面，适合于定义详细需求。下面介绍每个元素的解释和示例。
+
+>*[描述]*\
+>*“场景（Scenario）”描述了测试（需求）是什么。*\
+>*“给定（Given）”描述了用户采取任何操作之前的初始上下文或状态。*\
+>*“当……（When）”描述了用户所采取的操作。*\
+>*“然后（Then）”描述用户操作的预期输出或结果。*
+>
+>[示例]\
+>*场景（Scenario）：登录成功。*\
+>*给定（Given）：用户已经有一个账户。*\
+>*当（When）：输入邮箱地址和密码。然后，按登录按钮。*\
+>*然后（Then）：登录平台。*
+
+##### FR & NFR
+
+验收标准通常不止一个场景，需要接受更多输入，并且会变得更加复杂。为了达到质量验收标准，需要考虑下面更多的事情。
+
+- 如果用户没有账户，系统会怎么办？
+- 如果 100 个用户同时尝试登录，系统会怎么办？
+- 电子邮件地址和密码的最大值/最小值是多少？
+- 可以使用哪些浏览器：Safari、Chrome、Edge？
+- 可以使用哪些设备：智能手机，平板电脑，笔记本电脑？
+- 如果用户有色盲等残疾，可用性是否足够好？
+- 如果用户年龄较大，不能阅读小字，那么字体是否足够大？
+- 如果用户不使用鼠标，还可以轻松登录吗？
+
+这些详细需求称为功能需求（FR，Functional Requirement）和非功能需求（NFR，Non-Functional Requirement）。FR 描述了产品的基本行为，而 NFR 增加了更多细节，如 UI/UX、安全性、性能、可扩展性、兼容性等，以提升最终用户的满意度。下面是一些例子。
+
+>*场景1：错误处理*\
+>*给定：用户还没有创建帐户。*\
+>*当：输入电子邮件和密码。然后，按登录按钮。*\
+>*然后：用户无法登录，出现“账户不存在”的错误消息。*
+>
+>*场景2：性能和可扩展性检查。*\
+>*给定：100 个用户同时登录。*\
+>*当：他们输入电子邮件和密码。然后，同时点击登录按钮。*\
+>*然后：所有用户可以在5秒内登录并定向到平台首页。*
+>
+>*场景3: Android 手机和 Chrome 浏览器兼容性检查*\
+>*给定：用户使用 Android 手机和 Chrome 浏览器。*\
+>*当：进入登录界面。*\
+>*然后：以移动设备尺寸显示布局和内容，没有任何问题。*
+
+上面的例子只显示了在考虑 FR 和 NFR 之后的一部分验收标准，通常会有很多这种用例。低估需求定义是大多数项目无法进行范围管理、评估、调度和拆分用户故事的最大原因。
+
+非功能性需求（NFR）是：
+
+- 性能：产品响应速度。
+- 可扩展性：多少用户可以同时使用。
+- 可用性：UI/UX 应该有多复杂才能改善用户体验。
+- 安全性：针对黑客的安全性必须有多强。
+- 兼容性：产品应该能正确工作的设备和浏览器。
+- 可用性：产品可以接受的停机时间。
+
+##### 如何根据验收标准进行拆分
+
+在写下验收标准之后，可以基于它们拆分用户故事，如下图所示。明确的验收标准使其更易于拆分。例如，使用上述验收标准的“场景2：性能和可扩展性检查”示例被拆分为另一个用户故事，因此性能问题可以稍后解决。
+
+![](https://image.deepnomind.com/blog/image/7efbd9772a45d675b5a9c98af77f574c)
+
+#### 垂直拆分
+
+有两种拆分方式：垂直和水平。垂直拆分将用户故事拆分到所有架构层：前端、后端和数据库。另一方面，水平拆分是基于架构层的，例如前端、后端和数据库开发，每个PBI（或用户故事）都将分配给后端、前端和数据库开发人员。敏捷遵循垂直拆分，因为用户故事是独立的、可管理的、可发布的，质量更好，生产力更高。
+
+![](https://image.deepnomind.com/blog/image/3a237c43ed6c2d9eccfd06f234b1f8e1)
+
+#### INVEST 框架
+
+INVEST 框架是一组指导方针，有助于确保用户故事的高质量。首字母缩略词代表独立的（Independent）、可协商的（Negotiable）、有价值的（Valuable）、可估量的（Estimable）、小的（Small）和可测试的（Testable）。遵循这些标准，可以更有效的拆分大型用户故事，以减少 bug，明确范围，并更好的管理产品待办列表。
+
+- 独立（Independent）：用户故事应该是独立的，这样更容易管理和开发。依赖关系会导致编程和管理的复杂性。这可以在之前提到的垂直分割中实现。
+- 可协商（Negotiable）：用户故事应该是可协商的，允许开发团队对需求和估计进行讨论和细化。如果估计或范围不够现实，开发人员必须提出警告，并与产品所有者协商如何解决。
+- 有价值（Valuable）：用户故事应该向最终用户传递价值，而不仅仅是向产品所有者、scrum 主管或开发人员传递价值。用户故事的价值需要在 scrum 团队内外进行讨论，并通过反馈来验证。
+- 可评估（Estimable）：用户故事应该是可评估的，这样项目团队才能为 Sprint 做计划并预测结果。
+- 小的（Small）：用户故事应该小到可以在 Sprint 内完成，因为当它变大时，编程的复杂性会呈指数增长，而不是线性增长。一个庞大的用户故事可能会导致 bug，并导致估计不准确，因此应该被拆分成几个更小的用户故事。
+- 可测试的（Testable）：用户故事必须是可测试的。可测试性通过验收标准来实现，是在完成之前必须满足的标准。
+
+不可能总是满足所有标准，但重要的是要记住这些标准并尽可能满足，实际上这非常有效。例如，由于软件开发的性质，在某些情况下可能无法实现完全的独立性。但是，通过讨论和分析，可以使其在一定程度上具有独立性。
+
+#### Three Amigo
+
+Three Amigo 是美国敏捷教练、*Software Estimation Without guess: Effective Planning in a Imperfect World* 一书的作者 George Dinwiddie 在 2009 年提出的，是一种可以在开发前提高可接受标准的质量和范围的敏捷技术。Three Amigo 由不同角色组成，涵盖三个要点：业务（产品所有者）、技术（开发人员）和质量（测试人员）。这三者对于提高验收标准的质量和管理范围具有重要意义。(如果某个人能涵盖这三个方面，一个人就能占据其中两个角色。或者，如果有必要，也可以邀请更多的人)
+
+- 质量（Quality）：验收标准用于验收测试，因此测试人员需要检查以防止疏忽，并要确保覆盖异常用例。如果验收标准不够高，bug 和返工就会发生。
+- 业务（Business）：产品所有者代表业务人员，是决策者，负责最大化产品价值，该角色需要检查验收标准是否满足最终用户需求。
+- 技术（Technology）：开发人员提供验收标准的技术见解，以检查可行性和难点。如果任务太大或难以在目标时间内完成，开发人员必须与产品所有者协商，以更改范围或目标时间。
+
+#### 3C 模型（卡片、对话、确认）
+
+敏捷宣言最初签署人之一、极限编程（XP）创始人 Ron Jeffries 提出了 3C 模型，该模型概述了有效创建用户故事的三步过程。这三个步骤是卡片（Card）、对话（Conversation）和确认（Confirmation），每一步都是在前一步的基础上进行的。在第一步中，用户故事卡（User Story card）包含了最终用户想要使用产品的简要摘要。第二步是团队和利益相关者的对话，讨论用户故事细节。第三步是确认，向用户故事添加验收标准和可视化图像。理解这个基本流程对于编写高质量验收标准以及防止误解至关重要。
+
+![](https://image.deepnomind.com/blog/image/0d3110ad1d6d7f62d240f08949b51cb3)
+
+#### MoSCoW 方法
+
+MoSCoW（必须有、应该有、可以有、不会有）是由 Dai Clegg 在1994年开发的一种优先级方法，用于快速应用开发（RAD，rapid application development）。它在 2002 年首次与动态系统开发方法（DSDM，Dynamic Systems Development Method）一起广泛使用。MoSCoW 将需求分为四类：必须有（Must have），应该有（Should have），可以有（Could have），不会有（Won’t have）。
+
+- 必须有（Must have）：必须实现的需求。如果没有实现，功能就无法使用，交付将被视为失败。MUST 也被认为是最小可用子集（Minimum Usable Subset）的缩写。
+- 应该有（Should have）：不像“必须有”那么关键，但也应该被实现。虽然功能可以在没有需求的情况下使用，但通常为了满足客户需求应该要实现这部分需求。
+- 可以有（Could have）：比如改善 UI/UX 的需求，可以提升客户满意度，通常在时间和成本允许的情况下实施。
+- 不会有（Won't have）：现在不是必需的，可以在以后考虑和处理。
+
+MoSCoW在拆分用户故事时很有用。例如，“可以有”和“不会有”类别可以稍后讨论，因此将会放到不同的用户故事中。
+
+![](https://image.deepnomind.com/blog/image/4d55b430c4dfb4479c00cd91b804c74c)
+
+#### 9 种用户故事拆分模式
+
+敏捷咨询公司 Humanizing Work 定义了拆分用户故事的九种常见模式，被广泛认为是有效拆分用户故事的最佳实践和模式。下面介绍其中的一部分。
+
+##### UI/UX 拆分
+
+在某些情况下，复杂性在于用户界面而不是功能。为了解决这个问题，建议将任务分解为可管理块，并在继续构建更复杂的 UI 之前先构建简单的 UI。尽管两者是相互依赖的，但事实证明，这种方法在简化整个过程方面是有用的。
+
+>作为用户，我想搜索酒店。
+>
+> - 我可以用简单的 UI/UX 搜索酒店。
+> - 我可以用花哨的日历 UI 进行搜索
+
+##### 性能延迟
+
+用户故事可以根据性能进行拆分。虽然性能是可用性的关键因素，但当基本功能需要更早交付时，性能可以推迟。在这种情况下，性能可以被拆分。
+
+>作为用户，我想在电商平台上搜索产品。
+>
+> - 我可以搜索产品。（不考虑性能）
+> - 我可以搜索产品并在一秒钟内得到结果。
+
+##### 操作（例如 CRUD）
+
+CRUD（创建、读取、更新、删除）等操作是另一种拆分模式。CRUD 在整个系统中频繁出现，因此可以据此来拆分用户故事。
+
+>作为用户，我想管理帐户和个人信息。
+>
+> - 我可以创建账户。
+> - 我可以编辑注册信息。
+> - 我可以删除账户和信息。
+
+#### 参考文献
+
+[Scrum: The Art of Doing Twice the Work in Half the Time](https://www.amazon.com/Scrum-Doing-Twice-Work-Half/dp/038534645X/ref=sr_1_5?crid=2EK55CP317DXR&dib=eyJ2IjoiMSJ9.8G-fsh7eRLE7_V6r5joPv_DomiFZm7RRnKsBLHWNeBsojrFAJIwnQaeE-iwa3gPTNsqSOToUXXp9lVOxx9qt5dlYroRHwQs2CKVVGU7JC-vYQDYfRkQLxtCCLdcFPOhHfuaTzFRVosVS3Xl19WYbnfocutmGxmPksx4mfs1YYVLxng_GKt3DhNQX8a9oSWTq7wLzn0NwLa-XMfk4fGvQwHlQedNq2Ijv9I14RWT2wVEtg-1dl76mi9DpuntGPpiahSWSePaptxmkBGe2S6hr_IBSZCuN8KTDORVV-P6iVz0.nX99oPMSJKQQJfy5cQLq8TUvd3r7fZ6Aqt_Z7CS4caU&dib_tag=se&keywords=scrum&qid=1716882887&sprefix=scrum%252Caps%252C734&sr=8-5&_encoding=UTF8&tag=agiledev0d-20&linkCode=ur2&linkId=97245689734482c42f45ebcec5bcb674&camp=1789&creative=9325 "Scrum: The Art of Doing Twice the Work in Half the Time")
+
+[The Professional Product Owner: Leveraging Scrum as a Competitive Advantage](https://www.amazon.com/Professional-Product-Owner-Leveraging-Competitive/dp/0134686470/ref=sr_1_15?crid=2EK55CP317DXR&dib=eyJ2IjoiMSJ9.8G-fsh7eRLE7_V6r5joPv_DomiFZm7RRnKsBLHWNeBsojrFAJIwnQaeE-iwa3gPTNsqSOToUXXp9lVOxx9qt5dlYroRHwQs2CKVVGU7JC-vYQDYfRkQLxtCCLdcFPOhHfuaTzFRVosVS3Xl19WYbnfocutmGxmPksx4mfs1YYVLxng_GKt3DhNQX8a9oSWTq7wLzn0NwLa-XMfk4fGvQwHlQedNq2Ijv9I14RWT2wVEtg-1dl76mi9DpuntGPpiahSWSePaptxmkBGe2S6hr_IBSZCuN8KTDORVV-P6iVz0.nX99oPMSJKQQJfy5cQLq8TUvd3r7fZ6Aqt_Z7CS4caU&dib_tag=se&keywords=scrum&qid=1716882970&sprefix=scrum%252Caps%252C734&sr=8-15&_encoding=UTF8&tag=agiledev0d-20&linkCode=ur2&linkId=5aeb60c53fa4ceac074efade8a81e084&camp=1789&creative=9325 "The Professional Product Owner: Leveraging Scrum as a Competitive Advantage")
+
+[Agile Product Management with Scrum: Creating Products that Customers Love (Addison-Wesley Signature Series (Cohn))](https://www.amazon.com/Agile-Product-Management-Scrum-Addison-Wesley/dp/0321605780/ref=pd_bxgy_thbs_d_sccl_2/143-7035065-9337502?pd_rd_w=mpaFn&content-id=amzn1.sym.c51e3ad7-b551-4b1a-b43c-3cf69addb649&pf_rd_p=c51e3ad7-b551-4b1a-b43c-3cf69addb649&pf_rd_r=9Z8G2Z3HAASSQPQGSRT1&pd_rd_wg=SZyWT&pd_rd_r=606893bb-924a-4925-b7c0-1247f454345b&pd_rd_i=0321605780&psc=1&_encoding=UTF8&tag=agiledev0d-20&linkCode=ur2&linkId=9bd0eb7eafbe00e45f5d31cc7be81bbe&camp=1789&creative=9325 "Agile Product Management with Scrum: Creating Products that Customers Love (Addison-Wesley Signature Series (Cohn))")
+
+[The Toyota Way, Second Edition: 14 Management Principles from the World’s Greatest Manufacturer 2nd Edition](https://www.amazon.com/Toyota-Way-Second-Management-Manufacturer/dp/1260468518/ref=sr_1_1?crid=2BSYH3UEBUY2B&dib=eyJ2IjoiMSJ9.yXzsz7lCfAoA-ABFchwtHCUCAJPJHkf8g4socrD5tvVFqSaLf0_cIXWZQXho2DuKApbXUY0qz_AGusnPP2gimNd_JrJIo-yRB6svKXQNEa9-B91zzFM9ik3Doj4uu91Gsgf5O6Y6OCd1gQrhQkaJsaFMd488lciznWIumk3Ma-vdvVBnt_LxIwVNtPyiQUeK1jRm-Mp6CpA7qpwdRdDEd1FttJAGiiCemrGXexVSPk4.Rp9SWhwWpKzbZIWuE76JzgS8Wudp-t2n1awpjxQYVDE&dib_tag=se&keywords=the+toyota+way&qid=1716883067&s=books&sprefix=the+toyota+%252Cstripbooks-intl-ship%252C529&sr=1-1&_encoding=UTF8&tag=agiledev0d-20&linkCode=ur2&linkId=6223d3b0009299d255289645e1e11bbd&camp=1789&creative=9325 "The Toyota Way, Second Edition: 14 Management Principles from the World’s Greatest Manufacturer 2nd Edition")
+
+[The Humanizing Work Guide to Splitting User Stories](https://www.humanizingwork.com/the-humanizing-work-guide-to-splitting-user-stories/ "The Humanizing Work Guide to Splitting User Stories")
