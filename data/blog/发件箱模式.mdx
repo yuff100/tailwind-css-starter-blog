@@ -1,0 +1,120 @@
+---
+title: '发件箱模式：打造微服务可靠消息传输'
+date: '2025-4-29'
+tags: ['架构','最佳实践','设计模式']
+draft: false
+summary: '本文介绍了在微服务系统中实现可靠消息传递以及分布式事务的发件箱模式，该设计模式实现了消息生产者和消费者的解耦，了解这一模式可以帮助我们设计出容错性、可靠性更高的系统。'
+---
+
+>*本文介绍了在微服务系统中实现可靠消息传递以及分布式事务的发件箱模式，该设计模式实现了消息生产者和消费者的解耦，了解这一模式可以帮助我们设计出容错性、可靠性更高的系统。原文：[Outbox Pattern For Reliable Microservices Messaging](https://www.milanjovanovic.tech/blog/outbox-pattern-for-reliable-microservices-messaging "Outbox Pattern For Reliable Microservices Messaging")*
+
+![](https://image.deepnomind.com/blog/image/134a97f2e3dea57b0163c0b2e50a11be)
+
+开发**微服务**以及其他分布式系统都不容易，任何问题都有可能发生，甚至还有[关于这方面的研究论文](https://www.se.rit.edu/~se442/doc/fallacies.pdf "Fallacies of Distributed Computing Explained")。
+
+作为工程师，减少出错的可能性也应该是你的目标之一，本文将尝试使用**发件箱模式（Outbox pattern）** 来实现这一点。
+
+如何在分布式系统中实现组件之间的可靠通信？
+
+**发件箱模式**是此类问题的一种优雅解决方案，该方案让我们能够实现事务性保证，并至少向外部系统传递一次消息。
+
+让我们看看**发件箱模式**如何解决这个问题，以及如何实现。
+
+#### 发件箱模式解决了什么问题？
+
+当然，要理解**发件箱模式**解决了什么问题，我们先给出一个问题。
+
+下面是一个用户注册流程的示例，有几件事正在发生：
+
+- 将 `User` 保存到数据库
+- 向 `User` 发生欢迎邮件
+- 向消息总线发布 `UserRegisteredEvent`
+
+```cs
+public async Task RegisterUserAsync(User user, CancellationToken token)
+{
+    _userRepository.Insert(user);
+
+    await _unitOfWork.SaveChangesAsync(token);
+
+    await _emailService.SendWelcomeEmailAsync(user, token);
+
+    await _eventBus.PublishAsync(new UserRegisteredEvent(user.Id), token);
+}
+```
+
+所有操作都在常规路径中按序完成，没有任何问题，一切都很好。
+
+但如果其中任何一个操作失败了怎么办？
+
+- 数据库不可用，保存 `User` 失败
+- 邮件服务中断，无法发送邮件
+- 向服务总线发布事件没有成功
+
+另外，想象一下这种情况：你已经将 `User` 保存到数据库中，并向他发送了欢迎邮件，但未能成功发布 `UserRegisteredEvent` 来通知其他服务。怎么才能从这种情况中恢复过来？
+
+**发件箱模式**可以帮你**自动**更新数据库并将消息发送到消息总线。
+
+#### 实现发件箱模式
+
+首先在数据库中引入一个表示**发件箱（Outbox）** 的新表，可以将这个表称为 `OutboxMessages`，用于存储需要传递的所有消息。现在，我们不再直接向外部服务发出请求，而是简单的将消息作为新行存储在**发件箱**表中，消息通常以 JSON 格式存储。
+
+然后引入**后台进程**，定期轮询 `OutboxMessages` 表。如果发现有未处理的消息，就发布该消息并标记为已发送。如果由于某种原因造成消息发布失败，就在下一次执行时**重试**。
+
+注意，通过重试，现在实现了**至少一次消息传递（at-least-once message delivery）**。对于常规路径，消息只发布一次，而在重试的情况下，则会发布多次。
+
+我们现在可以基于**发件箱**模式重写上面的 `RegisterUserAsync` 方法：
+
+```cs
+public async Task RegisterUserAsync(User user, CancellationToken token)
+{
+    _userRepository.Insert(user);
+
+    _outbox.Insert(new UserRegisteredEvent(user.Id));
+
+    await _unitOfWork.SaveChangesAsync(token);
+}
+```
+
+**发件箱**与工作单元在同一个事务中，因此可以将 `User` 自动保存到数据库中，并持久化 `OutboxMessage`。如果保存到数据库失败，则回滚整个事务，并且不会向消息总线发送任何消息。
+
+由于现在将 `UserRegisteredEvent` 的发布转移到了工作进程，因此需要添加一个处理程序，以便向用户发送欢迎邮件。下面是 `SendWelcomeEmailHandler` 类的一个例子：
+
+```cs
+public class SendWelcomeEmailHandler : IHandle<UserRegisteredEvent>
+{
+    private readonly IUserRepository _userRepository;
+    private readonly IEmailService _emailService;
+
+    public SendWelcomeEmailHandler(
+        IUserRepository userRepository,
+        IEmailService emailService)
+    {
+        _userRepository = userRepository;
+        _emailService = emailService;
+    }
+
+    public async Task Handle(UserRegisteredEvent message)
+    {
+        var user = await _userRepository.GetByIdAsync(message.UserId);
+
+        await _emailService.SendWelcomeEmailAsync(user);
+    }
+}
+```
+
+#### 发件箱模式架构图
+
+下面是引入**发件箱**后的系统架构图，可以在数据库中看到 `Outbox` 表，因此可以将消息与相关实体一起通过同一事物存储到 `Outbox` 表中。
+
+![](https://image.deepnomind.com/blog/image/5b2b569aa446a6f54ebab089cb4f3660)
+
+#### 延伸阅读
+
+通过本文，你应该对**发件箱模式**以及它解决的问题有了很好的理解。如果需要在分布式系统中实现可靠消息传递，那么**发件箱模式**是一个很好的解决方案。
+
+如果需要了解发件箱模式的更多实现细节，可以观看以下油管视频：
+
+- [How to use the Domain Events pattern](https://youtu.be/BimfDeDV4yU "How to use the Domain Events pattern")
+- [How to implement the Outbox pattern](https://youtu.be/XALvnX7MPeo "How to implement the Outbox pattern")
+- [How to add retries to the Outbox with Polly](https://youtu.be/xajVttkZntU "How to add retries to the Outbox with Polly")
