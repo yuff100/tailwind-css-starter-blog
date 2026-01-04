@@ -1,0 +1,162 @@
+---
+title: '5 分钟搞定 Go 自定义结构体标签'
+date: '2025-05-31'
+tags: ['Golang']
+draft: false
+summary: '本文介绍了如何通过自定义结构体标签实现对结构体字段值的自定义处理，并讨论了该方法的优缺点。'
+---
+
+>*本文介绍了如何通过自定义结构体标签实现对结构体字段值的自定义处理，并讨论了该方法的优缺点。原文：[Struct Tags in Go: Implementing Custom Tag Functionality](https://medium.com/@ullauri.byron/struct-tags-in-go-implementing-custom-tag-functionality-b32c3c87423d?source=email-fcfdcee87c4a-1733682034928-digest.reader--b32c3c87423d----7-98------------------c5ba7540_a4c5_4f29_9009_de234e6e939b-1 "Struct Tags in Go: Implementing Custom Tag Functionality")*
+
+Go 的 struct 标签提供了一种为 struct 字段定义元数据的方法，允许开发人员指定在序列化或验证等操作期间如何处理这些字段。一个常见用例是 `json` 标签，告诉 Go 的 JSON 包如何将结构字段映射到 JSON 键。例如:
+
+```go
+type User struct {
+    ID int `json:"id"`
+    Name string `json:"name"`
+    Email string `json:"email"`
+}
+```
+
+本文将探索如何创建自定义结构体标签来实现自定义功能。我们将使用净化（sanitizing）HTML 内容的用例 —— 在许多 web 应用中，这是防止跨站脚本（XSS）攻击的重要功能。我们将学习如何定义自定义标记，实现自定义标签逻辑，并无缝集成到 Go 结构体中。
+
+#### 什么是结构体标签？
+
+在 Go 中，结构体标签是在结构体中字段声明之后的反引号 `` 中定义的元数据。可以使用 `reflect` 包处理这些标记，它允许在运行时对 Go 类型进行处理。struct 标签的一般格式如下所示：
+
+```go
+type StructName struct {
+    FieldName FieldType `tagName:"value"`
+}
+```
+
+可以在一个字段中定义多个标签，例如，`json`和一个用于净化的自定义标签`sanitize`：
+
+```go
+type Comment struct {
+    Body string `json:"body" sanitize:"stripall"`
+}
+```
+
+在这个例子中，`stripall`可以是一个自定义的清理指令，指示在存储或处理字段之前，应该删除所有 HTML 内容。
+
+#### 通过 Struct 标签实现 HTML 净化
+
+我们构建一个自定义解决方案，通过 struct 标签从 struct 字段中净化 HTML 内容。我们的目标是创建一个函数，它可以检查结构体的每个字段，并根据标签值进行必要的净化。
+
+**步骤1：定义自定义标签值**
+
+`sanitize`标签将指示代码根据其值删除所有 HTML 标签或允许某些安全的 HTML 标签：
+
+- `stripall`：删除所有 HTML 标签。
+- `safeugc`：允许用户生成内容包含有限安全 HTML 标签（例如，`<b>`, `<i>`）。
+
+结构体看起来像这样：
+
+```go
+type Comment struct {
+    Body string `json:"body" sanitize:"stripall"`
+    Title string `json:"title" sanitize:"safeugc"`
+}
+```
+
+**步骤2：编写净化函数**
+
+编写`SanitizeStruct`函数，通过 Go 的`reflect`包来处理结构体标签并清理字段：
+
+```go
+func getCleansedValue(tag string, value string) (string, error) {
+ var cleanedValue string
+ switch TagValue(tag) {
+ case StripAll:
+  cleanedValue = config.StripAll(value)
+ case SafeUGC:
+  cleanedValue = config.SafeUGC(value)
+ default:
+  return "", ErrInvalidTagValue
+ }
+
+ return cleanedValue, nil
+}
+
+// SanitizeStruct takes a struct and sanitizes it based on `sanitize` tags
+func SanitizeStruct(s interface{}) error {
+ val := reflect.ValueOf(s).Elem()
+ typ := val.Type()
+
+ for i := 0; i < val.NumField(); i++ {
+  field := val.Field(i)
+  fieldType := typ.Field(i)
+  fieldKind := field.Kind()
+
+  tag := fieldType.Tag.Get("sanitize")
+  if tag == "" {
+   if fieldKind == reflect.Struct {
+    if err := SanitizeStruct(field.Addr().Interface()); err != nil {
+     return err
+    }
+   }
+   continue
+  } else if fieldKind == reflect.Struct {
+   return ErrInvalidPropertyType
+  } else if fieldKind != reflect.String && !(fieldKind == reflect.Slice && field.Type().Elem().Kind() == reflect.String) {
+   return ErrInvalidPropertyType
+  }
+
+  if fieldKind == reflect.Slice {
+   for j := 0; j < field.Len(); j++ {
+    cleanedValue, err := getCleansedValue(tag, field.Index(j).String())
+    if err != nil {
+     return err
+    }
+    field.Index(j).SetString(cleanedValue)
+   }
+  } else {
+   cleanedValue, err := getCleansedValue(tag, field.String())
+   if err != nil {
+    return err
+   }
+   field.SetString(cleanedValue)
+  }
+ }
+
+ return nil
+}
+```
+
+然后，可以很方便的利用上述功能：
+
+```go
+func main() {
+ comment:= &Comment{
+  Body: "<script>alert('xss')</script>",
+  Title: "<b>Bold Title</b>",
+ }
+ 
+ err := SanitizeStruct(comment)
+ if err != nil {
+  fmt.Println("Error:", err)
+ }
+ 
+ fmt.Printf("Sanitized Comment: %+v\n", comment)
+}
+```
+
+本例中：
+
+- `SanitizeStruct`遍历结构体字段，并基于`sanitize`标签应用相关净化功能。
+- `StripAllHTML`删除字段值中的所有 HTML，`SafeUGC`只删除不安全的 HTML 标签。
+
+输出如下：
+
+```
+Sanitized Comment: &{Body: Title:<b>Bold Title</b>}
+```
+
+#### 什么时候不适合用结构体标签
+
+对于更复杂的逻辑或需要动态行为的场景，结构体标签并不总是最佳选择。由于结构体标签是静态的，并在运行时通过反射进行计算，因此在业务逻辑可能频繁更改或需要有条件的应用时缺乏灵活性。此外，标签不适合实现更复杂的验证工作流、错误处理或依赖外部因素的行为，因为当逻辑变得更复杂时，反射可能会变得更慢，更难以调试。对于更高级或不断变化的需求，将这种逻辑嵌入到代码中的其他地方，如专用函数或中间件中，可能是更好的方法。
+
+#### 结论
+
+Go 的 struct标签提供了一种灵活的声明式方法，可以直接将特殊字段逻辑添加到数据结构中。通过将自定义结构体标签与反射相结合，可以创建可重用的解决方案，并且可以轻松的跨结构体属性实现。请注意，通过反射来检查结构体标签会增加开销，所以在性能敏感的场合要小心使用这种方法！
