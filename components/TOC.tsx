@@ -72,7 +72,7 @@ export default function TOC({ toc }: TOCProps) {
 
   return (
     <nav className="toc">
-      <h3 className="text-sm tracking-wide text-gray-900 uppercase font-bold dark:text-gray-100 mb-3">
+      <h3 className="mb-3 text-sm font-bold tracking-wide text-gray-900 uppercase dark:text-gray-100">
         目录
       </h3>
       <ul className="space-y-2 text-sm">
@@ -86,9 +86,9 @@ export default function TOC({ toc }: TOCProps) {
             <a
               href={item.url}
               onClick={(e) => handleClick(e, item.url)}
-              className={`block py-1 transition-colors hover:text-primary-500 dark:hover:text-primary-400 ${
+              className={`hover:text-primary-500 dark:hover:text-primary-400 block py-1 transition-colors ${
                 activeId === item.url.slice(1)
-                  ? 'text-primary-600 font-medium dark:text-primary-400'
+                  ? 'dark:text-primary-400 font-medium text-primary-600'
                   : 'text-gray-600 dark:text-gray-400'
               }`}
             >

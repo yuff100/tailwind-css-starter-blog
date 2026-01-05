@@ -156,7 +156,7 @@ export default function PostLayout({ content, authorDetails, next, prev, childre
                 </div>
               )}
             </div>
-            <aside className="hidden xl:block xl:pt-11 xl:row-span-2">
+            <aside className="row-span-2 xl:block xl:pt-11 hidden">
               <div className="sticky top-20 max-h-[calc(100vh-5rem)] overflow-auto">
                 <TOC toc={toc} />
               </div>
