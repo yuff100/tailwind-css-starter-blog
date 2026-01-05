@@ -1,0 +1,985 @@
+---
+title: '打造弹性 TCP 服务：基于 PoW 的 DDoS 防护'
+date: '2025-09-08'
+tags: ['Golang','架构']
+draft: false
+summary: '本文介绍了如何通过 Go 构建可靠的 TCP 服务，并利用工作量证明（PoW）机制抵御 DDoS 攻击。'
+authors: ['default']
+---
+
+>*本文介绍了如何通过 Go 构建可靠的 TCP 服务，并利用工作量证明（PoW）机制抵御 DDoS 攻击。原文：[Building a Resilient TCP Server in Go: DDoS Protection with Proof of Work (PoW)…](https://medium.com/@alsgladkikh/building-a-resilient-tcp-server-in-go-ddos-protection-with-proof-of-work-pow-and-docker-4a6ac9928c56 "Building a Resilient TCP Server in Go: DDoS Protection with Proof of Work (PoW)…")*
+
+![](https://image.deepnomind.com/blog/image/3872ee878a686177d2dafd29576ef631)
+
+# 简介
+
+本文将介绍如何通过 Go 语言构建可靠的 TCP 服务器，并通过工作量证明（PoW，Proof of Work）机制来抵御 DDoS 攻击。项目实现了一个通过 TCP 处理客户端请求并提供随机名言的服务器。但在客户端获取名言之前，必须完成一个 PoW 任务，以证明其合法性。这种方法有助于降低因 DDoS 攻击导致服务器过载的风险。
+
+该 TCP 服务器包含两个关键组成部分：通过工作量证明（PoW）实现的安全保护以及获取随机名言。服务端向客户端发送一项需要耗费计算资源的任务，只有在成功完成该任务后，客户端才会收到以随机名言形式呈现的响应。这种方法构建了一个系统，其中每个客户端以计算能力作为“费用”来换取对资源的访问权，从而使得大规模攻击变得成本高昂且效果不佳。
+
+工作量证明（PoW）是一种加密任务，客户端必须解决该任务以验证其意图并获得对资源的访问权限。这种方法在诸如比特币这样的区块链中被广泛用于验证交易，但也可用于防止服务器过载。在我们的案例中，工作量证明要求客户端在访问服务器之前执行特定计算，从而形成一种“屏障”，使大规模自动化请求变得复杂。
+
+工作量证明（PoW）过程的运作方式如下：服务端向客户端发送一项任务，该任务要求找到一个特定值（例如，具有一定数量前缀零的哈希值）。客户端解决该任务并将其解决方案发送回服务端。如果解决方案正确，服务端将接受该请求，否则就拒绝。在本项目中，PoW 不需要进行昂贵运算，但其效果足以防止分布式拒绝服务（DDoS）攻击所常见的大量请求。
+
+# 项目架构
+
+为了尽可能合理且便捷的组织服务端和客户端代码，我们将项目划分为多个目录，从而帮助我们清晰划分入口点、业务逻辑和特定功能模块，既简化了开发过程，也方便了测试工作。
+
+该项目包含以下主要目录：
+
+- `cmd` —— 包含服务端和客户端的入口点。
+- `pkg` —— 存储实现项目主要功能（PoW 任务和名言）的独立模块。
+- `internal` —— 包含服务端和客户端的主要业务逻辑，负责处理核心交互。
+
+我们仔细看看这些目录中都包含什么内容。
+
+`cmd/server` 和 `cmd/client` 这两个目录中包含的文件是运行服务端和客户端的入口点。这些文件会配置应用参数、启动服务端或客户端，并创建 Docker 容器。
+
+`cmd/server/main.go` —— 启动服务端的主文件。该文件创建服务端实例，指定运行端口，并建立 TCP 连接。
+
+```golang
+package main
+
+import (
+    "log"
+    "net"
+    "word-of-wisdom/internal/server"
+    "word-of-wisdom/pkg/pow"
+    "word-of-wisdom/pkg/wisdom"
+)
+
+func main() {
+    listener, err := net.Listen("tcp", ":8080")
+    if err != nil {
+        log.Fatalf("Failed to start server: %v", err)
+    }
+    defer listener.Close()
+    log.Println("Server is listening on port 8080...")
+
+    srv := server.NewServer(pow.PoWImpl{}, wisdom.WisdomImpl{})
+
+    for {
+        conn, err := listener.Accept()
+        if err != nil {
+            continue
+        }
+        go srv.HandleConnection(conn)
+    }
+}
+```
+
+`cmd/client/main.go` —— 用于启动客户端应用程序的文件，该应用程序会连接到服务端，接收 PoW 任务，解决该任务，并将解决方案返回服务端以获取名言。
+
+```golang
+package main
+
+import (
+    "log"
+    "net"
+    "word-of-wisdom/internal/client"
+)
+
+func main() {
+    conn, err := net.Dial("tcp", "localhost:8080")
+    if err != nil {
+        log.Fatalf("Failed to connect to server: %v", err)
+    }
+    defer conn.Close()
+
+    client.StartClient(conn)
+}
+```
+
+`pkg/pow` 目录中包含了负责生成和验证 PoW 任务的代码。该模块能够独立运行，使其能够与项目其他部分分开使用，且便于进行测试。
+
+`pow.go` —— 这是实现 PoW 逻辑的主要文件，包含用于生成任务（通过使用种子和难度级别）以及验证客户端解决方案的函数，这些函数为客户端创建简单的计算任务，要求“证明”其请求的合法性。
+
+```golang
+package pow
+
+import (
+    "crypto/sha256"
+    "fmt"
+    "math/rand"
+)
+
+const difficulty = 2
+
+type PoW interface {
+    GenerateChallenge() (string, string)
+    VerifyPoW(seed, proof string) bool
+}
+
+type PoWImpl struct{}
+
+func (p PoWImpl) GenerateChallenge() (string, string) {
+    seed := fmt.Sprintf("%d", rand.Int63())
+    return seed, fmt.Sprintf("%0*d", difficulty, 0)
+}
+
+func (p PoWImpl) VerifyPoW(seed, proof string) bool {
+    hash := fmt.Sprintf("%x", sha256.Sum256([]byte(seed+proof)))
+    return hash[:difficulty] == fmt.Sprintf("%0*d", difficulty, 0)
+}
+```
+
+`pkg/wisdom` 模块包含用于存储和传递随机名言的代码。项目中的这一独立部分仅在需要时提供文本内容，使得该模块易于测试，并且允许在不修改主应用程序逻辑的情况下添加或更改名言。
+
+`quotes.go` —— 这是存储名言列表的文件，包含了一个名为 `GetRandomQuote` 的函数，该函数会从预定义列表中返回一条随机名言。也可以将此模块用于其他需要名言功能的应用程序中。
+
+```golang
+package wisdom
+
+import "math/rand"
+
+type Wisdom interface {
+    GetRandomQuote() string
+}
+
+type WisdomImpl struct{}
+
+var quotes = []string{
+    "Stay focused and keep shipping.",
+    "Success is not final, failure is not fatal.",
+    "Keep pushing your limits.",
+}
+
+func (w WisdomImpl) GetRandomQuote() string {
+    return quotes[rand.Intn(len(quotes))]
+}
+```
+
+`internal/server` 和 `internal/client` 目录包含了 TCP 服务端和客户端的主要业务逻辑,包括用于生成和验证 PoW、客户端交互以及名言传递的代码。
+
+`internal/server/server.go` —— 该文件实现了服务端客户端交互逻辑，负责创建 PoW 任务、验证解决方案，并在验证成功后向客户端发送名言。
+
+```golang
+package server
+
+import (
+    "bufio"
+    "fmt"
+    "net"
+    "strings"
+    "word-of-wisdom/pkg/pow"
+    "word-of-wisdom/pkg/wisdom"
+)
+
+type Server struct {
+    PoW    pow.PoW
+    Wisdom wisdom.Wisdom
+}
+
+func NewServer(pow pow.PoW, wisdom wisdom.Wisdom) *Server {
+    return &Server{PoW: pow, Wisdom: wisdom}
+}
+
+func (s *Server) HandleConnection(conn net.Conn) {
+    defer conn.Close()
+    seed, prefix := s.PoW.GenerateChallenge()
+    _, _ = conn.Write([]byte("Solve PoW: " + seed + " with prefix " + prefix + "\n"))
+    reader := bufio.NewReader(conn)
+    proof, _ := reader.ReadString('\n')
+    proof = strings.TrimSpace(proof)
+    if s.PoW.VerifyPoW(seed, proof) {
+        quote := s.Wisdom.GetRandomQuote()
+        _, _ = conn.Write([]byte("Here is your wisdom: " + quote + "\n"))
+    } else {
+        _, _ = conn.Write([]byte("Invalid PoW.\n"))
+    }
+}
+```
+
+`internal/client/client.go` —— 管理客户端到服务端的连接、PoW 任务解决和响应检索的文件。在这段代码中，客户端接收任务、解决任务并返回结果。
+
+```golang
+package client
+
+import (
+    "bufio"
+    "fmt"
+    "net"
+    "strconv"
+    "strings"
+    "word-of-wisdom/pkg/pow"
+)
+
+func StartClient(conn net.Conn) {
+    reader := bufio.NewReader(conn)
+    message, _ := reader.ReadString('\n')
+    parts := strings.Fields(message)
+    seed := parts[2]
+    proof := solvePoW(seed)
+    _, _ = conn.Write([]byte(proof + "\n"))
+    response, _ := reader.ReadString('\n')
+    fmt.Println("Server response:", response)
+}
+
+func solvePoW(seed string) string {
+    var proof int
+    powImpl := pow.PoWImpl{}
+    for {
+        proofStr := strconv.Itoa(proof)
+        if powImpl.VerifyPoW(seed, proofStr) {
+            return proofStr
+        }
+        proof++
+    }
+}
+```
+
+# 工作量证明（PoW）：基础知识和 DDoS 保护
+
+该 TCP 服务器的主要防护机制之一是工作量证明（PoW）。本节将解释什么是 PoW、如何帮助抵御 DDoS 攻击，以及如何用 Go 语言实现。
+
+工作量证明（PoW）是一种要求客户端执行特定计算以证明其合法性的方法。PoW 的理念是服务端生成需要耗费计算资源的任务。客户端接收并解决该任务，然后服务端才会接受其请求。这种机制使得诸如分布式拒绝服务（DDoS）之类的攻击成本更高，因为攻击者要完成每个 PoW 任务需要耗费大量计算资源。
+
+对于任何服务器而言，主要风险之一就是来自恶意客户端的大量请求，从而导致服务器过载甚至出现宕机情况。实际上，PoW 机制为每次请求设定了“报酬”，而“成本”就是客户端的处理时间。因此，PoW 会过滤掉一些请求，增加了完成这些请求所需的资源，从而减轻了服务器负载。
+
+这也会迫使攻击者投入更多资源，从而使得这种攻击在大多数情况下都无法奏效。
+
+现在让我们来看看如何在 TCP 服务器上实现 PoW 机制。我们的任务是设计一个简单的计算难题：
+
+- 为每个客户端提供一个独特的任务。
+- 检查客户端解决方案的正确性。
+
+对于每次请求，使用种子（一个随机数）和难度（复杂程度级别）来创建一个独特任务。难度级别表示结果哈希值中所需前缀零的数量。所需的零数越多，任务就越难，客户解决它所需的时间也就越长。
+
+在 `GenerateChallenge` 函数中，生成一个随机数种子，并在哈希值中设置所需的零前缀。
+
+```golang
+package pow
+
+import (
+    "crypto/sha256"
+    "fmt"
+    "math/rand"
+)
+
+const difficulty = 2 // 所需前缀零的数目
+
+type PoW interface {
+    GenerateChallenge() (string, string)
+    VerifyPoW(seed, proof string) bool
+}
+
+type PoWImpl struct{}
+
+// GenerateChallenge 创建一个带有种子和所需前缀零的任务
+func (p PoWImpl) GenerateChallenge() (string, string) {
+    seed := fmt.Sprintf("%d", rand.Int63()) // 生成随机数字符串
+    prefix := fmt.Sprintf("%0*d", difficulty, 0) // 前缀, 如果 difficulty = 2，就是"00"
+    return seed, prefix
+}
+```
+
+- `seed` 是针对每次请求生成的随机数，用于确保任务的唯一性。
+- `prefix` 是由零组成的字符串，生成的哈希值必须包含该前缀。前缀越长，任务就越难解决。
+
+一旦客户端解决了该任务，就会返回一个他们认为能解决 PoW 任务的证明值 `proof`。在服务端，通过 SHA-256 哈希函数来检查这个值是否符合所需前缀要求。
+
+在 `VerifyPoW` 函数中，验证过程的具体步骤如下：将客户端提供的 `seed` 和 `proof` 进行组合，应用 SHA-256 算法，检查生成的哈希值是否以指定数量的零开头。
+
+```golang
+func (p PoWImpl) VerifyPoW(seed, proof string) bool {
+    // 基于 seed 和 proof 创建字符串，然后应用 SHA-256
+    hash := fmt.Sprintf("%x", sha256.Sum256([]byte(seed + proof)))
+    expectedPrefix := fmt.Sprintf("%0*d", difficulty, 0)
+    fmt.Printf("Verifying proof: %s | Expected prefix: %s | Hash: %s\n", proof, expectedPrefix, hash)
+
+    // 检查哈希是否以所需的前缀开始
+    return hash[:difficulty] == expectedPrefix
+}
+```
+
+- 基于 `seed` 和 `proof` 生成用于哈希运算的字符串。
+- 该字符串通过 SHA-256 进行哈希处理，并将前缀字符与预期前缀（`expectedPrefix`）进行比较。
+- 如果前缀字符与 `expectedPrefix` 匹配，意味着客户端已完成 PoW 任务。
+
+当客户端连接时，服务端生成任务，将其发送给客户端，并等待响应。客户端计算证明值并将其发送回服务器。服务端验证该值，然后返回名言或报错。
+
+```golang
+func (s *Server) HandleConnection(conn net.Conn) {
+    defer conn.Close()
+
+    // 生成 PoW 任务
+    seed, prefix := s.PoW.GenerateChallenge()
+    _, _ = conn.Write([]byte("Solve PoW: " + seed + " with prefix " + prefix + "\n"))
+
+    // 接收响应
+    reader := bufio.NewReader(conn)
+    proof, _ := reader.ReadString('\n')
+    proof = strings.TrimSpace(proof)
+
+    // 验证 PoW
+    if s.PoW.VerifyPoW(seed, proof) {
+        quote := s.Wisdom.GetRandomQuote()
+        _, _ = conn.Write([]byte("Here is your wisdom: " + quote + "\n"))
+    } else {
+        _, _ = conn.Write([]byte("Invalid PoW.\n"))
+    }
+}
+```
+
+最终，PoW 任务通过要求客户端证明其合法性来帮助保护服务器免受过载的影响。采用 PoW 机制会使每个请求对客户端而言成本更高，但对服务端而言又足够轻便，从而实现安全性和性能之间的平衡。
+
+# 使用 PoW 实现 TCP 服务器
+
+既然我们已经了解了工作量证明（PoW）的工作原理以及其重要性，接下来我们着手实现。目标是创建生成 PoW 任务的服务器，将其发送给客户端，并在验证解决方案后提供一条随机名言。本节将逐步讲解服务端代码，解释每个函数的作用。
+
+服务端专注于建立 TCP 连接、向客户端发送 PoW 任务，并验证解决方案。我们来看看这些步骤的细节。
+
+为了使服务端能够接收连接请求，首先设置 TCP 侦听器，在服务端 8080 端口上进行侦听，当有客户端连接时，服务端会处理该连接。如果出现连接错误，服务端将继续监听其他请求，并忽略失败的连接。
+
+```golang
+package main
+
+import (
+    "log"
+    "net"
+    "word-of-wisdom/internal/server"
+    "word-of-wisdom/pkg/pow"
+    "word-of-wisdom/pkg/wisdom"
+)
+
+func main() {
+    listener, err := net.Listen("tcp", ":8080") // Start a TCP listener on port 8080
+    if err != nil {
+        log.Fatalf("Failed to start server: %v", err)
+    }
+    defer listener.Close()
+    log.Println("Server is listening on port 8080...")
+
+    srv := server.NewServer(pow.PoWImpl{}, wisdom.WisdomImpl{}) // Initialize the server with PoW and quotes
+
+    // Accept incoming connections
+    for {
+        conn, err := listener.Accept()
+        if err != nil {
+            continue // Ignore connection errors
+        }
+        go srv.HandleConnection(conn) // Handle the connection in a separate goroutine
+    }
+}
+```
+
+`listener.Accept()` 会等待连接，一旦连接建立，就会将其传递给 `HandleConnection` 处理。基于协程使我们能够并行处理多个连接。
+
+一旦建立连接，服务端就会为客户端生成 PoW 任务。服务端调用 `PoW` 模块中的 `GenerateChallenge` 方法，基于随机 `seed` 和指定的难度级别 `difficulty` 创建独特任务。该任务以文本形式发送给客户端，其中包含 `seed` 和所需的前缀零。
+
+```golang
+func (s *Server) HandleConnection(conn net.Conn) {
+    defer conn.Close()
+
+    // 生成 PoW 任务
+    seed, prefix := s.PoW.GenerateChallenge()
+    _, _ = conn.Write([]byte("Solve PoW: " + seed + " with prefix " + prefix + "\n"))
+}
+```
+
+- `seed` 是随机数，作为完成任务的基础。
+- `prefix` 是前缀零，表示难度级别。客户端接收到此消息后便开始寻找合适的证明值，该值与 `seed` 相结合后应生成具有所需前缀零数量的哈希值。
+
+一旦客户端完成任务，就会返回 `proof`（客户端认为符合 PoW 要求的字符串）。服务端接收该值，如果符合所需条件，就向客户端发送一条随机名言。
+
+服务端通过 `VerifyPoW` 方法验证解决方案，该方法会检查 `seed + proof` 的哈希值是否具有所需数量的前缀零。
+
+```golang
+// 验证 PoW
+reader := bufio.NewReader(conn)
+proof, _ := reader.ReadString('\n') // 从客户端收到解决方案
+proof = strings.TrimSpace(proof)
+
+if s.PoW.VerifyPoW(seed, proof) {
+    quote := s.Wisdom.GetRandomQuote()
+    _, _ = conn.Write([]byte("Here is your wisdom: " + quote + "\n"))
+} else {
+    _, _ = conn.Write([]byte("Invalid PoW.\n"))
+}
+```
+
+- 服务端会读取客户端提供的 `proof`。
+- 通过 `VerifyPoW` 函数，检查该解决方案是否符合 PoW 条件。如果满足条件，服务端就会向客户端发送一条随机名言；否则，客户端会收到一条错误消息。
+
+现在我们已经完成了整个过程，下面是文件 `internal/server/server.go` 的完整代码，整合了所有逻辑：
+
+```golang
+package server
+
+import (
+    "bufio"
+    "fmt"
+    "net"
+    "strings"
+    "word-of-wisdom/pkg/pow"
+    "word-of-wisdom/pkg/wisdom"
+)
+
+type Server struct {
+    PoW    pow.PoW
+    Wisdom wisdom.Wisdom
+}
+
+func NewServer(pow pow.PoW, wisdom wisdom.Wisdom) *Server {
+    return &Server{PoW: pow, Wisdom: wisdom}
+}
+
+// HandleConnection 处理传入的客户端连接
+func (s *Server) HandleConnection(conn net.Conn) {
+    defer conn.Close()
+
+    // 步骤 1: 生成 PoW 任务
+    seed, prefix := s.PoW.GenerateChallenge()
+    _, _ = conn.Write([]byte("Solve PoW: " + seed + " with prefix " + prefix + "\n"))
+
+    // 步骤 2: 从客户端收到解决方案
+    reader := bufio.NewReader(conn)
+    proof, _ := reader.ReadString('\n')
+    proof = strings.TrimSpace(proof) // 删除额外的空格和换行符
+
+    // 步骤 3: 验证 PoW，如果成功则返回名言
+    if s.PoW.VerifyPoW(seed, proof) {
+        quote := s.Wisdom.GetRandomQuote()
+        _, _ = conn.Write([]byte("Here is your wisdom: " + quote + "\n"))
+    } else {
+        _, _ = conn.Write([]byte("Invalid PoW.\n"))
+    }
+}
+```
+
+`NewServer` —— 服务端构造器，接受 `PoW` 和 `Wisdom` 接口的实现，分别用于生成任务和提供名言。这种设置便于独立测试 PoW 和名言功能。
+
+`HandleConnection` —— 负责管理客户端交互的主要函数，执行以下步骤：
+
+- 读取客户提交的 `proof`。
+- 调用 `VerifyPoW` 来检查该解决方案是否正确。
+
+这种架构使我们更容易扩展或修改服务端逻辑，所有关键功能（从任务生成到解决方案验证以及名言提供）都分别被划分到单独的模块和方法中。
+
+# 用 PoW 解决方案实现客户端
+
+本节将详细介绍客户端实现过程，该客户端与服务端建立连接，接收 PoW 任务，解决该任务，并将解决方案发送给服务端以获取名言。客户端部分相对简单，但每个步骤都必须谨慎处理，以便与服务端正确交互并解决 PoW 任务。
+
+客户端的主要任务是连接到服务端，获取 PoW 任务，解决该任务，发送解决方案。如果操作正确，服务端将会回传一条随机名言。我们来逐一了解每个步骤。
+
+第一步是客户端与服务端建立 TCP 连接。在此场景中，服务端运行在 `localhost` 上，监听 `8080` 端口。如果连接失败，客户端会输出错误信息并退出。
+
+```golang
+package main
+
+import (
+    "log"
+    "net"
+    "word-of-wisdom/internal/client"
+)
+
+func main() {
+    conn, err := net.Dial("tcp", "localhost:8080") // 连接到服务端
+    if err != nil {
+        log.Fatalf("Failed to connect to server: %v", err)
+    }
+    defer conn.Close()
+
+    client.StartClient(conn) // 启动客户端
+}
+```
+
+- 用 `net.Dial` 与服务端建立 TCP 连接。
+- 连接建立后，将该连接传递给 `StartClient` 函数，该函数负责处理客户端的主要逻辑。
+
+连接建立后，客户端会等待服务端发送包含 PoW 任务的消息。该消息大概会是这样的：`Solve PoW: <seed> with prefix <prefix>`。客户端从该消息中提取 `seed` 和 `prefix`，用于解决任务。
+
+```golang
+func StartClient(conn net.Conn) {
+    reader := bufio.NewReader(conn)
+    message, _ := reader.ReadString('\n') // 从服务端接收任务消息
+    fmt.Println("Received:", message)
+
+    parts := strings.Fields(message) // 将消息分成几个部分
+    if len(parts) < 3 {
+        fmt.Println("Invalid challenge format received")
+        return
+    }
+
+    seed := parts[2] // 从消息中提取 seed
+}
+```
+
+- 用 `ReadString('\n')` 从服务端读取消息。
+- 该消息会被分割成不同部分，以提取 `seed` 和 `prefix`。如果消息格式不正确，客户端会以错误信息终止。
+
+有了 `seed` 之后，客户端就可以继续解决 PoW 任务。客户端尝试不同的 `proof`，并与 `seed` 组合起来，对结果进行哈希运算，直到其前缀零达到所需数量。这个过程会一直持续，直到找到有效的 `proof` 为止。
+
+```golang
+func solvePoW(seed string) string {
+    var proof int
+    powImpl := pow.PoWImpl{}
+
+    for {
+        proofStr := strconv.Itoa(proof) // 将 proof 转换为字符串以进行验证
+        if powImpl.VerifyPoW(seed, proofStr) { // 检查哈希是否满足条件
+            fmt.Printf("Proof found: %s\n", proofStr)
+            return proofStr
+        }
+        proof++ // 尝试下一个值
+    }
+}
+```
+
+- 客户端初始时的 `proof` 为 0，并不断递增该值，直至找到满足 PoW 要求的值。
+- 用 `VerifyPoW` 方法来检查 `seed + proof` 的哈希值是否具有所需数量的前缀零。
+- 当找到有效的 `proof` 时，将其返回。
+
+在找到解决方案后，客户端将 `proof` 发送给服务端。
+
+```golang
+proof := solvePoW(seed)
+_, _ = conn.Write([]byte(proof + "\n")) // 将解决方案发送给服务端
+```
+
+如果服务端接受该解决方案，将返回随机名言，客户端等待此消息并将其打印出来。如果解决方案不正确，服务端将发送错误消息。
+
+```golang
+response, _ := reader.ReadString('\n') // 读取来自服务端的响应
+fmt.Println("Server response:", response)
+```
+
+我们介绍了每个步骤，下面是现了客户机逻辑的 `internal/client/client.go` 的完整代码。
+
+```golang
+package client
+
+import (
+    "bufio"
+    "fmt"
+    "net"
+    "strconv"
+    "strings"
+    "word-of-wisdom/pkg/pow"
+)
+
+func StartClient(conn net.Conn) {
+    reader := bufio.NewReader(conn)
+    message, _ := reader.ReadString('\n') // 从服务端接收任务消息
+    fmt.Println("Received:", message)
+
+    parts := strings.Fields(message) // 将消息分成几个部分
+    if len(parts) < 3 {
+        fmt.Println("Invalid challenge format received")
+        return
+    }
+
+    seed := parts[2] // 从消息中提取 seed
+
+    // 解决 PoW 任务
+    proof := solvePoW(seed)
+    _, _ = conn.Write([]byte(proof + "\n")) // 将解决方案发送到服务端
+
+    // 从服务端接收名言
+    response, _ := reader.ReadString('\n')
+    fmt.Println("Server response:", response)
+}
+
+// solvePoW 通过寻找有效的 proof 解决 PoW 任务
+func solvePoW(seed string) string {
+    var proof int
+    powImpl := pow.PoWImpl{}
+
+    for {
+        proofStr := strconv.Itoa(proof) // 将 proof 转换为字符串以进行验证
+        if powImpl.VerifyPoW(seed, proofStr) { // 检查哈希是否满足条件
+            fmt.Printf("Proof found: %s\n", proofStr)
+            return proofStr
+        }
+        proof++ // 尝试下一个值
+    }
+}
+```
+
+`StartClient` —— 负责管理连接、接收任务、解决问题以及从服务端接收名言的主要函数，包括：
+
+- 从服务端读取 PoW 任务并提取 `seed`。
+- 调用 `solvePoW` 函数来解决该任务。
+- 发送解决方案并接收服务端响应。
+
+`solvePoW` —— 解决 PoW 任务的函数，会尝试不同 `proof`，将每个值与 `seed` 相结合，直到生成具有所需数量前缀零的哈希值。一旦找到有效证明，就会返回以供提交给服务端。
+
+有了这段代码，客户端就能成功与服务端进行交互，实现连接、完成 PoW 任务以及接收名言。
+
+# 通过 Docker 容器化
+
+我们已经实现了支持 DDoS 防护功能的 TCP 应用程序服务端和客户端的开发，现在我们用 Docker 来实现容器化，从而使应用更易于部署和测试，帮助我们将服务端和客户端运行在独立且易于配置的容器中。
+
+我们为服务端和客户端分别创建 Docker 镜像，每个镜像都将被设置为在单独的容器中运行应用程序的相应部分。借助 Docker，可以独立运行服务端和客户端，并通过 Docker 网络实现交互。
+
+对于每个组件（服务端和客户端），分别创建 Dockerfile，其中包含构建 Docker 镜像的指令。
+
+`cmd/server/Dockerfile` —— 创建包含应用程序服务端部分的镜像。我们从官方 Go 镜像开始，将源代码复制到容器中，构建服务端，并运行指定命令。
+
+```dockerfile
+# 用官方 Go 镜像进行构建
+FROM golang:1.19 AS builder
+
+# 设置容器内工作目录
+WORKDIR /app
+
+# 拷贝 go.mod 和 go.sum 加载依赖项
+COPY go.mod go.sum ./
+RUN go mod download
+
+# 拷贝其他代码
+COPY . .
+
+# 构建服务端
+RUN go build -o server cmd/server/main.go
+
+# 创建可执行的最小镜像
+FROM alpine:latest
+WORKDIR /root/
+COPY --from=builder /app/server .
+
+# 设置启动服务端的指令
+CMD ["./server"]
+```
+
+在 Dockerfile 中，我们：
+
+- 采用多阶段构建方式，首先在 golang 镜像中编译 Go 应用程序，然后仅将二进制文件传输到轻量级 alpine 镜像中，以最大程度减小最终镜像的大小。
+- 指定编译后的 `server` 二进制文件应在容器启动时运行。
+
+对于客户端，创建一个类似的 Dockerfile（例如 `cmd/client/Dockerfile`），用于构建客户端 Go 应用程序，并指定运行该应用程序的命令。
+
+```dockerfile
+# 用官方 Go 镜像进行构建
+FROM golang:1.19 AS builder
+
+# 设置容器内工作目录
+WORKDIR /app
+
+# 拷贝 go.mod 和 go.sum 加载依赖项
+COPY go.mod go.sum ./
+RUN go mod download
+
+# 拷贝其他代码
+COPY . .
+
+# 构建客户端
+RUN go build -o client cmd/client/main.go
+
+# 创建可执行的最小镜像
+FROM alpine:latest
+WORKDIR /root/
+COPY --from=builder /app/client .
+
+# 设置启动客户端的指令
+CMD ["./client"]
+```
+
+与服务器的情况一样，我们：
+
+- 采用多阶段构建方式以减小镜像大小。
+- 仅将客户端可执行文件传输至最终的轻量级 Alpine 镜像中。
+- 指定客户端代码在容器启动时运行。
+
+既然我们为每个组件都制定了 Dockerfile，就可以构建镜像并运行容器了。
+
+要构建 Docker 镜像，请使用以下命令：
+
+```
+# Build the image for the server
+docker build -t word-of-wisdom-server -f cmd/server/Dockerfile .
+
+# Build the image for the client
+docker build -t word-of-wisdom-client -f cmd/client/Dockerfile .
+```
+
+这些命令将创建 `word-of-wisdom-server` 和 `word-of-wisdom-client` 这两个镜像，之后就可以利用这些镜像来运行容器了。
+
+现在，我们用 Docker 运行服务端和客户端。服务端将在 8080 端口运行，为了测试客户端，我们让它连接到相同的 Docker 网络，以便能够与服务端进行交互。
+
+首先，启动服务端容器：
+
+```
+docker run -d --name wisdom-server -p 8080:8080 word-of-wisdom-server
+```
+
+- `-d` 以分离模式（后台运行）启动容器。
+- `--name wisdom-server` 为容器指定名称。
+- `-p 8080:8080` 将服务端端口转发到本地，以便客户端能够连接。
+
+接下来，启动客户端并将其连接到服务端：
+
+```
+docker run --rm --network="host" word-of-wisdom-client
+```
+
+- `--rm` 会自动在客户端运行结束后删除该客户端容器。
+- `--network="host"` 会将客户端连接到主机网络，使其能够直接连接到运行在 `localhost:8080` 上的服务端。
+
+通过这些命令，客户端将连接到服务端，接收 PoW 任务，解决该任务，并收到名言。
+
+现在我们的项目已经完全实现了容器化，只需运行几条 Docker 命令，就能在本地以及服务器上轻松运行和测试。
+
+# 支持自动化的 Makefile
+
+为了便于项目操作，我们创建 Makefile 来自动化一些关键命令，例如构建镜像、运行容器以及清理 Docker 资源。Makefile 大大减少了手动输入命令所花费的时间，并有助于避免错误。本节将详细介绍如何设置 Makefile 以及执行哪些命令。
+
+Makefile 允许我们将关键命令归类为“目标”，每个目标都执行特定任务。这非常方便，可以用一条命令来执行复杂的命令序列。在我们的例子中，Makefile 将支持构建 Docker 镜像、启动和停止容器以及清理资源。
+
+```makefile
+# 项目变量
+PROJECT_NAME := word-of-wisdom
+SERVER_IMAGE := $(PROJECT_NAME)-server
+CLIENT_IMAGE := $(PROJECT_NAME)-client
+
+# 构建 Docker 镜像
+.PHONY: build-server build-client
+build-server:
+ docker build -t $(SERVER_IMAGE) -f cmd/server/Dockerfile .
+
+build-client:
+ docker build -t $(CLIENT_IMAGE) -f cmd/client/Dockerfile .
+
+# 运行容器
+.PHONY: run-server run-client
+run-server:
+ docker run -d --name wisdom-server -p 8080:8080 $(SERVER_IMAGE)
+
+run-client:
+ docker run --rm --network="host" $(CLIENT_IMAGE)
+
+# 运行测试 (如果需要的话)
+.PHONY: test
+test:
+ go test -v ./... -tags=integration
+
+# 清理 Docker 资源
+.PHONY: clean
+clean:
+ docker rm -f wisdom-server || true
+ docker rmi -f $(SERVER_IMAGE) $(CLIENT_IMAGE) || true
+ docker system prune -f || true
+
+# 全周期: 构建, 测试, 以及部署
+.PHONY: all
+all: build-server build-client run-server run-client
+```
+
+对于构建服务端和客户机映像，我们添加了两个目标：`build-server` 和 `build-client`。这些目标运行各自的 `docker build` 命令来基于 Dockerfiles 创建 docker 镜像。
+
+```golang
+# 构建 Docker 镜像
+.PHONY: build-server build-client
+build-server:
+ docker build -t $(SERVER_IMAGE) -f cmd/server/Dockerfile .
+
+build-client:
+ docker build -t $(CLIENT_IMAGE) -f cmd/client/Dockerfile .
+```
+
+- `build-server`：通过 `cmd/server` 下的 Dockerfile 文件，构建带有 `$(SERVER_IMAGE)` 标签的服务端镜像。
+- `build-client`：通过 `cmd/client` 下的 Dockerfile 文件，构建带有 `$(CLIENT_IMAGE)` 标签的客户端镜像。
+
+这些目标允许我们通过运行 `make build-server` 或 `make build-client` 这样的单一命令，为服务端和客户端快速构建镜像。
+
+在构建镜像之后，需要启动服务端和客户端，为此我们添加了 `run-server` 和 `run-client`。
+
+```makefile
+# Run containers
+.PHONY: run-server run-client
+run-server:
+ docker run -d --name wisdom-server -p 8080:8080 $(SERVER_IMAGE)
+
+run-client:
+ docker run --rm --network="host" $(CLIENT_IMAGE)
+```
+
+- `run-server`：以分离模式启动服务端容器（`-d`），转发端口 `8080`，使其能够被客户端访问。
+- `run-client`：启动客户端容器并将其连接到主机网络（`--network="host"`）以与服务器交互。
+
+`make run-server`命令在后台启动服务器，监听传入的连接。`make run-client`命令启动客户端，客户端连接到服务器，解决 PoW 任务，并检索名言。
+
+Makefile 还包括运行测试和清理 Docker 资源的目标。
+
+```makefile
+# 运行测试(如果需要的话)
+.PHONY: test
+test:
+ go test -v ./... -tags=integration
+```
+
+`test`：使用 `go test`命令在项目中运行测试，确保代码在构建镜像和部署应用之前正常工作。
+
+```golang
+# 清理 Docker 资源
+.PHONY: clean
+clean:
+ docker rm -f wisdom-server || true
+ docker rmi -f $(SERVER_IMAGE) $(CLIENT_IMAGE) || true
+ docker system prune -f || true
+```
+
+- `clean`：删除服务端容器（使用命令 `docker rm -f wisdom-server`）以及服务端和客户端镜像（使用命令 `docker rmi -f $(SERVER_IMAGE) $(CLIENT_IMAGE)`）。同时清除未使用的 Docker 资源（使用命令 `docker system prune -f`），从而释放空间并删除临时数据。
+
+`|| true` 的作用是确保即便例如某个容器或镜像已经被删除，这些命令也不会停止执行。
+
+为了方便起见，`all` 将执行完整的构建镜像、运行测试以及部署应用程序的流程。
+
+```makefile
+# 全流程: 构建, 测试, 部署
+.PHONY: all
+all: build-server build-client run-server run-client
+```
+
+运行 `make all`  将构建服务端和客户端映像，在后台启动服务端容器，然后启动客户端，客户端连接到服务器，解决PoW任务并检索名言。
+
+# 基于测试容器和 mock 编写测试
+
+我们用 `testcontainers-go` 库全面测试 TCP 服务器，该库可以帮助我们直接在测试环境中启动容器，创建 mock 对象并确保结果的稳定。这种方法特别适用于集成测试，可以帮助我们验证客户端与服务器的交互。本节将演示如何使用容器和 mock 对象来设置测试环境。
+
+借助 `testcontainers-go`，我们能够在测试中直接创建临时服务器容器。这种方法能将测试与环境隔开，在可控的环境中运行测试，从而确保结果更具可预测性和稳定性。在我们的测试中，将启动一个服务器容器，让客户端连接到该容器，验证服务器在解决 PoW 任务后是否能正确返回名言。
+
+如果尚未安装 `testcontainers-go` 库，请用 Go Modules 进行添加：
+
+```bash
+go get github.com/testcontainers/testcontainers-go
+```
+
+为了确保测试结果可预测，我们为 `wisdom` 组件创建 mock 对象，该 mock 将始终返回固定消息，而不是随机名言，这样我们就可以验证客户端是否接收到预期响应。
+
+下面是 `Wisdom` 接口的 mock 实现，通过 `GetRandomQuote` 方法返回固定名言：
+
+```golang
+package server
+
+type MockWisdom struct{}
+
+// GetRandomQuote 返回可预测的固定名言
+func (m MockWisdom) GetRandomQuote() string {
+    return "Mocked wisdom quote for testing."
+}
+```
+
+无论何时调用该 mock，都会返回 `"Mocked wisdom quote for testing."`。
+
+以下是 `server_test.go` 中完整的测试代码，包括一下内容：
+
+1. 使用 `testcontainers-go` 在容器中启动服务器。
+2. 将客户端连接到服务器。
+3. 验证客户端从服务器接收到预期名言。
+
+```golang
+package server
+
+import (
+    "bufio"
+    "context"
+    "net"
+    "strconv"
+    "strings"
+    "testing"
+
+    "github.com/stretchr/testify/assert"
+    "github.com/testcontainers/testcontainers-go"
+    "github.com/testcontainers/testcontainers-go/wait"
+    "word-of-wisdom/pkg/pow"
+)
+
+// TestHandleConnection 通过 testcontainers-go 和 mock 测试服务器。
+func TestHandleConnection(t *testing.T) {
+    ctx := context.Background()
+
+    // 为服务器创建带有环境变量的容器
+    req := testcontainers.ContainerRequest{
+        Image:        "word-of-wisdom-server", // 假设已经构建了镜像
+        ExposedPorts: []string{"8080/tcp"},
+        Env: map[string]string{
+            "MOCK_WISDOM_QUOTE": "Mocked wisdom quote for testing.",
+        },
+        WaitingFor: wait.ForListeningPort("8080/tcp"),
+    }
+    serverContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+        ContainerRequest: req,
+    ...eed)
+
+    // 解决 PoW
+    proof := solvePoW(seed)
+    t.Log("Generated proof:", proof)
+
+    // 将解决方案发送给服务端
+    _, err = conn.Write([]byte(proof + "\n"))
+    assert.NoError(t, err)
+
+    // 验证服务端是否返回了预期的固定名言
+    response, err := reader.ReadString('\n')
+    assert.NoError(t, err)
+    t.Log("Received response from server:", response)
+    assert.Equal(t, "Here is your wisdom: Mocked wisdom quote for testing.\n", response)
+}
+
+// extractSeed 从服务端 challenge 消息中提取 seed
+func extractSeed(msg string) string {
+    parts := strings.Fields(msg)
+    if len(parts) < 3 {
+        return ""
+    }
+    return parts[2]
+}
+
+// solvePoW 通过查找正确的 proof 解决 PoW 任务
+func solvePoW(seed string) string {
+    var proof int
+    powImpl := pow.PoWImpl{}
+
+    for {
+        proofStr := strconv.Itoa(proof)
+        if powImpl.VerifyPoW(seed, proofStr) {
+            return proofStr
+        }
+        proof++
+    }
+}
+```
+
+**启动容器：**
+
+- 服务器容器是使用 `testcontainers-go` 工具创建的。
+- 设置了 `MOCK_WISDOM_QUOTE` 环境变量，以确保服务器使用 mock 的名言。
+- `WaitingFor` 确保在测试开始之前容器已完全启动。
+
+**连接客户端：**
+
+- 通过测试容器提供的主机和映射端口，建立与容器的 TCP 连接。
+
+**解决 PoW：**
+
+- 客户端从服务端的 challenge 消息中提取 `seed`。
+- 用 `solvePoW` 辅助函数来解决 PoW 问题。
+
+**验证响应：**
+
+- 客户端将证明信息发送至服务器，并读取响应。
+- 该测试验证了响应与预期的固定名言相匹配：`"Here is your wisdom: Mocked wisdom quote for testing.\n"`。
+
+此测试利用带有 mock 数据的独立容器来确保服务器行为的可预测性，并验证客户端与服务器之间的正确交互。通过将 `testcontainers-go` 与 mock 相结合，可以进行真实且可靠的集成测试，使项目变得强大且经过全面测试。
+
+# 结论
+
+在本文中，我们逐步开发了一个基于 PoW 技术的 TCP 服务器，以抵御 DDoS 攻击。服务器通过向客户端发送 PoW 挑战来处理其请求，客户端必须解决这个挑战才能获得访问资源的权限（在这里，资源就是一条随机名言）。我们实现了：
+
+- 一种强大的 PoW 机制，通过要求客户端耗费计算资源来解决任务，从而使得对服务器的广泛访问变得更加困难。
+- 一个模块化且灵活的项目结构，包括 PoW、引言管理和业务逻辑等独立模块。
+- 一个与服务器交互的客户端组件，能够解决 PoW 任务，并在成功完成时获取响应。
+
+防范 DDoS 攻击是任何公共服务的关键任务，而实施 PoW 是一种简单但有效的降低服务器过载风险的方法。PoW 迫使每个客户端耗费计算资源，使得大规模攻击成本高昂且难以实施。这种方法也适用于其他需要限制单个用户或设备请求数量的服务中。
+
+虽然该项目已具备基本功能并实现了其主要目标，但仍存在进一步发展和改进的空间：
+
+- **额外的 PoW 难度级别**：我们可以将 PoW 机制调整为根据服务器负载动态提高难度。例如，当请求超过一定阈值时，服务端可以要求哈希值包含更多的前缀零，从而使任务变得更难。
+- **增强的名言管理**：目前，名言是从固定列表中获取的，我们可以集成数据库来存储名言，以便于管理、添加和删除名言。
+- **日志记录和监控**：实施日志记录和监控系统有助于跟踪服务器行为、分析请求，并更有效应对潜在攻击。像 Prometheus 和 Grafana 这样的工具可用于此目的。
+- **改进测试**：虽然我们已经用 `testcontainers-go` 进行了隔离测试，但还可以添加额外的集成和负载测试来评估在高负载下的服务器性能。
+
+这个项目不仅展示了使用 PoW 和容器化进行服务器保护的基本原理，还为构建更复杂、更可靠的系统奠定了基础。希望这篇文章对你有所帮助，并激发你创造自己的安全解决方案。
+
+完整项目代码可以在 [GitHub](https://github.com/Zmey56/wisdom-tcp-server "Wisdom TCP Server") 上找到，可以根据自身项目需求对其进行调整和测试。
