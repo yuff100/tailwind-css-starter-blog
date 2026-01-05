@@ -10,7 +10,7 @@ const siteMetadata = {
   siteRepo: 'https://github.com/yuff100/tailwind-nextjs-starter-blog',
   siteLogo: `${process.env.BASE_PATH || ''}/static/favicons/logo-144x144.png`,
   socialBanner: `${process.env.BASE_PATH || ''}/static/images/twitter-card.png`,
-  mastodon: 'https://mastodon.social/@mastodonuser',
+  // mastodon: 'https://mastodon.social/@mastodonuser',
   email: 'yuff100@163.com',
   github: 'https://github.com/yuff100',
   // x: 'https://twitter.com/x',
