@@ -88,7 +88,7 @@ export default function TOC({ toc }: TOCProps) {
               onClick={(e) => handleClick(e, item.url)}
               className={`hover:text-primary-500 dark:hover:text-primary-400 block py-1 transition-colors ${
                 activeId === item.url.slice(1)
-                  ? 'dark:text-primary-400 font-medium text-primary-600'
+                  ? 'text-primary-600 dark:text-primary-400 font-medium'
                   : 'text-gray-600 dark:text-gray-400'
               }`}
             >
