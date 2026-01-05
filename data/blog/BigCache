@@ -1,0 +1,222 @@
+---
+title: 'BigCache: Go 高性能内存缓存实现'
+date: '2025-08-30'
+tags: ['Golang','架构']
+draft: false
+summary: '本文介绍了支持高并发、低延迟应用的高性能 Go 内存缓存 BigCache，探讨其分片机制、哈希算法等性能优化机制。'
+authors: ['default']
+---
+
+>*本文介绍了支持高并发、低延迟应用的高性能 Go 内存缓存 BigCache，探讨其分片机制、哈希算法等性能优化机制。原文：[BigCache: High-Performance Memory Caching in Go](https://medium.com/@hxzhouh/bigcache-high-performance-memory-caching-in-go-16357469f905 "BigCache: High-Performance Memory Caching in Go")*
+
+![](https://image.deepnomind.com/blog/image/5ff6e83868d1a23a6c50e55ddf62145a)
+
+[BigCache](https://github.com/allegro/bigcache "BigCache") 是基于 Go 实现的高性能内存缓存库，专为高并发、低延迟应用而设计。本文将探讨 BigCache 的性能优化技术，包括其分片机制、高效哈希算法、读写锁的使用等，并基于源码进行详细解释。
+
+# 分片和锁
+
+从用户角度来看，缓存的作用类似于大型哈希表，用于存储键值对（k/v）。那是否可以基于 `map[string][]byte` 和 `sync.RWMutex` 来实现呢？
+
+当然可以，但这种实现仅适用于低性能需求的情况。尽管 `sync.RWMutex` 对读写进行了优化，但会对并发写入进行串行处理，即使对不同的键进行操作也是如此。这在高写入并发的情况下会造成瓶颈，阻塞多个协程，每次只允许一个写入者进行操作。
+
+BigCache 通过采用受 Java 的 `ConcurrentMap` 启发的分片机制来解决这一问题。它将大型哈希表划分为多个较小的分片，每个分片都由其自身的锁进行保护。这种策略在 MongoDB 分片之类的高并发场景中被广泛使用，能够有效减少竞争。Go 还有一个第三方实现：[concurrent-map](https://github.com/orcaman/concurrent-map "concurrent-map")。
+
+# 源码示例：BigCache 分片
+
+```golang
+// https://github.com/allegro/bigcache/blob/a2f05d7cbfdc7000a8b7e1c40f27d3f239c204df/bigcache.go#L58
+type BigCache struct {
+    shards       []*cacheShard
+    shardMask    uint64
+    config       Config
+}
+func newBigCache(ctx context.Context, config Config, clock clock) (*BigCache, error) {
+    ......
+    cache := &BigCache{
+        shards: make([]*cacheShard, config.Shards),
+        lifeWindow: lifeWindowSeconds,
+        clock: clock,
+        hash: config.Hasher,
+        config: config,
+        shardMask: uint64(config.Shards - 1),
+        close: make(chan struct{}),
+    }
+    ......
+    for i := 0; i < config.Shards; i++ {
+        cache.shards[i] = initNewShard(config, onRemove, clock)
+    }
+    ......
+    return cache, nil
+}
+```
+
+每个缓存对象根据键计算哈希值：`hash(key) % N`。理想情况下，并发请求均匀分布在各个分片上，从而最大限度减少锁竞争并减少延迟。
+
+# 最优分片数（`N`)
+
+`N` 越大越好吗？不一定，过多分片会导致不必要的开销。通过选择合理的 `N` 来平衡性能和成本至关重要，通常选择 2 的幂为 `N`（例如 16、32、64），从而模运算可以通过快速位运算进行计算：
+
+```golang
+// https://github.com/allegro/bigcache/blob/a2f05d7cbfdc7000a8b7e1c40f27d3f239c204df/bigcache.go#L253
+func (c *BigCache) getShard(hashedKey uint64) (shard *cacheShard) {
+    return c.shards[hashedKey & c.shardMask]
+}
+```
+
+因为 `N` 是 2 的幂，对于任意 `x`，等式 `x mod N = （x & （N - 1））` 成立，因此只需进行一次与运算（`&`）就可以找到它的余数。
+
+# 选择正确的哈希算法
+
+计算机科学家发明了许多哈希算法，Go 也实现了其中许多算法。理想的哈希算法应当满足以下条件：
+
+- 哈希值具有高度随机性。
+- 计算速度快。
+- 极小的内存需求，以减轻垃圾回收（GC）压力。
+
+BigCache 的默认实现使用 `fnv64a` 算法，通过在栈上进行位运算来避免堆分配。
+
+```golang
+type fnv64a struct{}
+const (
+    offset64 = 14695981039346656037
+    prime64 = 1099511628211
+)
+func (f fnv64a) Sum64(key string) uint64 {
+var hash uint64 = offset64
+for i := 0; i < len(key); i++ {
+        hash ^= uint64(key[i])
+        hash *= prime64
+    }
+return hash
+}
+```
+
+# 内存优化
+
+在 Go 中，垃圾回收器在标记和扫描阶段会检查 map 中的每个元素。如果缓存中包含了数百万个缓存对象，那么垃圾回收器对这些对象进行检查就会导致不必要的时间开销。这是因为如果哈希表中的元素包含指针，那么在标记阶段，垃圾回收器会扫描包含指针的每一个元素；如果不包含指针，则会在标记阶段跳过这些元素。我们可以通过一个简单例子来验证。
+
+```golang
+var pointMap map[int]*int  
+var noPointMap map[int]int  
+  
+func BenchmarkPointMap(b *testing.B) {  
+    pointMap = make(map[int]*int)  
+    for i := 0; i < 10e6; i++ {  
+       pointMap[i] = &i  
+    }  
+    b.ResetTimer()  
+    for i := 0; i < b.N; i++ {  
+       delete(pointMap, i)  
+       pointMap[i] = &i  
+    }  
+}  
+  
+func BenchmarkNoPointMap(b *testing.B) {  
+    noPointMap = make(map[int]int)  
+    for i := 0; i < 10e6; i++ {  
+       noPointMap[i] = i  
+    }  
+    b.ResetTimer()  
+    for i := 0; i < b.N; i++ {  
+       delete(noPointMap, i)  
+       noPointMap[i] = i  
+    }  
+}
+```
+
+结果：
+
+```
+➜  gc git:(main) ✗ GOMAXPROCS=1  go test --bench=. 
+goos: darwin
+goarch: arm64
+pkg: blog-example/go/gc
+cpu: Apple M1 Pro
+BenchmarkPointMap        5273188               209.4 ns/op
+BenchmarkNoPointMap      7037848               178.5 ns/op
+```
+
+然后，分别运行两个测试来分析GC：
+
+```
+go test -bench=BenchmarkPointMap -trace trace_point.out  
+go test -bench=BenchmarkNoPointMap -trace trace_no_point.out
+```
+
+`NoPointMap` 的协程等待时间（Wall Duration）仅为 `PointMap` 的 2%。尽管 `PointMap` 的并发度较低，且不存在 goroutine 的竞争情况，但由于元素数量众多，在标记/扫描阶段的垃圾回收过程需要花费数百毫秒来进行标记和遍历。
+
+![BenchmarkPointMap 协程等待时间](https://image.deepnomind.com/blog/image/78cc3c89954b014738a31d0c0da69678)
+
+![BenchmarkNoPointMap 协程等待时间](https://image.deepnomind.com/blog/image/517dbaaa5f607222a1bb4ce206044d5b)
+
+BigCache 如何解决这个问题？禁止用户在 BigCache 中使用指针来存储数据。开个玩笑，如果真这么做了，用户立马会抛弃 BigCache。其实有几种方法可以解决这个问题。
+
+1. 参考 [offheap](https://godoc.org/github.com/glycerine/offheap "offheap")，用自定义 `Malloc()` 和 `Free()` 函数来手动管理内存，同时绕过运行时垃圾回收机制，但这样做更有可能导致内存泄漏。
+2. 参考 [freecache](https://github.com/coocood/freecache "freecache")，通过减少指针数量来实现零垃圾回收开销的 map。它将键和值存储在环形缓冲区中，并使用索引来查找对象。BigCache 实现此功能的方式是将哈希值用作 `map[int]int` 的键，将缓存对象序列化为预分配的大字节数组，然后用数组偏移量作为 `map[int]int` 的值。
+
+```golang
+//https://github.com/allegro/bigcache/blob/a2f05d7cbfdc7000a8b7e1c40f27d3f239c204df/shard.go#L18
+type cacheShard struct {
+    hashmap     map[uint64]uint32
+    entries     queue.BytesQueue
+    lock        sync.RWMutex
+    entryBuffer []byte
+    onRemove    onRemoveCallback
+    isVerbose    bool
+    statsEnabled bool
+    logger       Logger
+    clock        clock
+    lifeWindow   uint64
+    hashmapStats map[uint64]uint32
+    stats        Stats
+}
+
+func (s *cacheShard) set(key string, hashedKey uint64, entry []byte) error {  
+    currentTimestamp := uint64(s.clock.Epoch()) 
+  
+    s.lock.Lock() 
+  
+    if previousIndex := s.hashmap[hashedKey]; previousIndex != 0 { // Check for old entries with the same hash key
+       if previousEntry, err := s.entries.Get(int(previousIndex)); err == nil {  
+          resetHashFromEntry(previousEntry) // reset hash of old entries
+          delete(s.hashmap, hashedKey) // Remove old entries from the hash table 
+       }  
+    }  
+  
+    if !s.cleanEnabled...= s.entries.Push(w); err == nil { // Try to push new entries into the queue
+          s.hashmap[hashedKey] = uint64(index)// Update the hash table 
+          s.lock.Unlock() 
+          return nil 
+       }  
+       if s.removeOldestEntry(NoSpace) != nil { // If there is not enough space, delete the oldest entry  
+          s.lock.Unlock()  
+          return errors.New("entry is bigger than max shard size") 
+       }  
+    }  
+}
+
+func (s *cacheShard) getValidWrapEntry(key string, hashedKey uint64) ([]byte, error) {  
+    wrappedEntry, err := s.getWrappedEntry(hashedKey)  
+    if err != nil {  
+       return nil, err  
+    }  
+  
+    if !compareKeyFromEntry(wrappedEntry, key) {  
+       s.collision()  
+       if s.isVerbose {  
+          s.logger.Printf("Collision detected. Both %q and %q have the same hash %x", key, readKeyFromEntry(wrappedEntry), hashedKey)  
+       }  
+  
+       return nil, ErrEntryNotFound  
+    }  
+    s.hitWithoutLock(hashedKey)  
+    return wrappedEntry, nil  
+}
+```
+
+`queue.BytesQueue` 是按需使用的字节数组。当添加 `[]byte` 数据时，会将数据复制到数组末尾。当 BigCache 删除缓存元素时，只是从 `map[uint64]uint32` 中移除该元素被添加的索引，并将 `queue.BytesQueue` 队列中的数据设置为 0。删除操作会创建许多“空洞”，而这些空洞不会被重组或删除。因为是基于字节数组实现的，所以删除“空洞”是一个耗时的操作，会导致锁时间过长。BigCache 只能等待清理机制来移除这些“空洞”。
+
+其他一些细节：
+
+1. 在 BigCache 中缓存的对象无法刷新其过期时间，所有缓存最终都会过期。
+2. 所有缓存的生命周期由 `config.LifeWindow` 进行配置，无法针对单个键进行单独设置。
