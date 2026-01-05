@@ -1,0 +1,149 @@
+---
+title: 'Go/C++ 指针比较'
+date: '2025-09-01'
+tags: ['Golang','C++']
+draft: false
+summary: '本文比较了 Go 和 C/C++ 对指针的使用，理解 Go 指针的设计如何在保留 C/C++ 指针优点的基础上解决其带来的安全问题。'
+authors: ['default']
+---
+
+>*本文比较了 Go 和 C/C++ 对指针的使用，理解 Go 指针的设计如何在保留 C/C++ 指针优点的基础上解决其带来的安全问题。原文：[Pointers Made Painless: How Go Solves C/C++’s Biggest Headache](https://medium.com/@kirubaspace/pointers-made-painless-how-go-solves-c-c-s-biggest-headache-1618e8d14d38 "Pointers Made Painless: How Go Solves C/C++’s Biggest Headache")*
+
+![](https://image.deepnomind.com/blog/image/5eb3d8327d9c80f4aac6fda70102b0a8)
+
+世界上很少有事物能在同一特性上同时兼具强大与脆弱的特质。在编程领域，如果要我举例的话，那就是 C/C++ 语言中的指针。
+
+在系统编程领域，指针带来的好处毋庸置疑 —— 能够实现极高的运行速度和底层控制能力。
+
+世界各地的开发者们已经用了 30-40 年的指针，所有事物都会不断变化发展，指针是否也应该随之发展呢？
+
+倘若保留指针的功能，同时又能让其使用起来更加简便、减少出错的可能性，会怎样呢？这就有了 Go 语言，它旨在简化现代编程。
+
+# 例 1：自动内存管理
+
+#### Go：无内存泄漏
+
+在 Go 中，内存管理由垃圾收集器处理，不需要手动分配或释放内存，从而防止内存泄漏。
+
+```golang
+package main
+
+import "fmt"
+
+type Person struct {
+    Name string
+    Age  int
+}
+
+func createPerson() *Person {
+    return &Person{Name: "Alice", Age: 30} // 自动管理内存
+}
+
+func main() {
+    p := createPerson()
+    fmt.Println(p.Name) // 不需要释放内存  
+}
+```
+
+#### C/C++
+
+在 C/C++ 中，必须手动管理内存，忘记释放内存会导致内存泄漏。
+
+```c
+#include <iostream>
+#include <string>
+
+struct Person {
+    std::string Name;
+    int Age;
+};
+
+Person* createPerson() {
+    return new Person{"Alice", 30}; // 手动分配内存
+}
+
+int main() {
+    Person* p = createPerson();
+    std::cout << p->Name << std::endl;
+    // 忘记删除 p? 内存泄露!
+    // delete p; 
+}
+```
+
+# 例 2：Nil指针安全
+
+#### Go：Nil指针安全
+
+在 Go 中，访问 nil 指针不会导致程序崩溃。相反，只会返回零值或 panic（如果试图解引用的话）。
+
+```golang
+package main
+
+import "fmt"
+
+type Person struct {
+    Name string
+    Age  int
+}
+
+func main() {
+    var p *Person // p 是 nil
+    if p != nil {
+        fmt.Println(p.Name) // 检查 nil 是安全的
+    } else {
+        fmt.Println("p is nil") // 优雅地处理 nil 指针
+    }
+}
+```
+
+#### C/C++
+
+在 C/C++ 中，解引用空指针会导致未定义行为，通常会导致崩溃（segmentation fault）。
+
+```c
+#include <iostream>
+#include <string>
+
+struct Person {
+    std::string Name;
+    int Age;
+};
+
+int main() {
+    Person* p = nullptr; // p is null
+    std::cout << p->Name << std::endl; // 崩溃: null 指针解引用
+}
+```
+
+# 例 3：更好的解引用方法
+
+#### Golang
+
+```golang
+// Go: 用指针访问结构体字段
+type Person struct {
+    Name string
+    Age  int
+}
+
+func main() {
+    p := &Person{Name: "Alice", Age: 30}
+    fmt.Println(p.Name) // 即使 'p' 是指针，也不需要 '->'，只需要用 '.'
+}
+```
+
+#### C/C++
+
+```c
+// C++: 用指针访问结构体字段
+struct Person {
+    std::string Name;
+    int Age;
+};
+
+int main() {
+    Person* p = new Person{"Alice", 30};
+    std::cout << p->Name; // 'p' 是指针，需要通过 '->' 访问
+    delete p; // 别忘了释放内存!
+}
+```
