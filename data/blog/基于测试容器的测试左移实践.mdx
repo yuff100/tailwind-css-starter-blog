@@ -1,0 +1,210 @@
+---
+title: '基于测试容器的测试左移实践'
+date: '2025-10-08'
+tags: ['软件测试','最佳实践']
+draft: false
+summary: '本文介绍了如何通过本地集成测试在开发的早期阶段帮助研发团队发现缺陷，介绍了如何利用 Docker Testcontainers 技术简化测试环境的搭建，让本地集成测试像单元测试一样简单。'
+authors: ['default']
+---
+
+>*本文介绍了如何通过本地集成测试在开发的早期阶段帮助研发团队发现缺陷，介绍了如何利用 Docker Testcontainers 技术简化测试环境的搭建，让本地集成测试像单元测试一样简单。原文：[Shift-Left Testing with Testcontainers: Catching Bugs Early with Local Integration Tests](https://www.docker.com/blog/shift-left-testing-with-testcontainers "Shift-Left Testing with Testcontainers: Catching Bugs Early with Local Integration Tests")*
+
+![](https://image.deepnomind.com/blog/image/4123c8e08e3d3537298bb87b52dd2805)
+
+现代软件开发注重速度与灵活性，因此高效的测试至关重要。DORA 的研究表明，顶尖团队在保持高绩效和高可靠性的同时也能蓬勃发展。他们能够将交付周期缩短 127 倍，每年部署次数增加 182 倍，变更失败率降低 8 倍，而最令人惊叹的是，发生事故后的恢复时间缩短 2293 倍。秘诀就在于他们实现了“左移”。
+
+“左移”是一种将诸如测试和安全等集成活动提前纳入开发周期的做法，这样开发团队就能在问题进入生产环境之前就发现并解决。通过尽早纳入本地测试和集成测试，开发人员能够避免后期出现代价高昂的缺陷，加快开发速度，并提高软件质量。
+
+本文将介绍集成测试如何在内部开发回路的早期阶段帮助我们发现缺陷，以及 [Testcontainers](https://docs.docker.com/testcontainers/?_gl=1*149hfkg*_gcl_au*MTM5NDg4MzE0MS4xNzU5MzI0Njc3*_ga*MTEyMDA1NjA3LjE3NTkzMjQ2Nzk.*_ga_XJWPQMJYHQ*czE3NTkzMjQ2NzkkbzEkZzEkdDE3NTkzMjQ4MTQkajI2JGwwJGgw "Testcontainers") 如何让它们变得像单元测试一样轻便且易于操作。最后，我们将根据 DORA 指标来剖析将集成测试左移应用于开发流程对变更的处理速度和交付周期的影响。
+
+# 实际案例：用户注册中的大小写敏感性错误
+
+在传统开发流程中，集成测试和端到端测试通常在开发周期的外循环中执行，从而导致错误的延迟发现和高昂的修复成本。例如，如果你正在构建用户注册服务，用户会输入电子邮件地址，那么就必须确保电子邮件地址不区分大小写，并且在存储时不会出现重复。
+
+如果未妥善处理大小写敏感性问题，并且将其视为由数据库来处理，那么对于用户使用字母大小写不同的重复电子邮件进行注册的场景，只能在端到端测试或人工检查中进行。在那个阶段，已经超出了软件开发生命周期的后期阶段，可能会导致高昂的修复成本。
+
+通过将测试提前进行，并让开发人员能够在本地启动实际服务（如数据库、消息代理、云模拟器或其他微服务），测试效率会大大提高。从而让开发人员能够更早发现并解决缺陷，避免在后期付出高昂的修复成本。
+
+我们深入探讨这个示例场景，以及不同类型的测试会如何应对。
+
+#### 场景
+
+一位新开发人员正在实施用户注册服务，并着手准备进行生产部署。
+
+`registerUser` 方法代码示例：
+
+```javascript
+async registerUser(email: string, username: string): Promise<User> {
+    const existingUser = await this.userRepository.findOne({
+        where: { 
+            email: email          
+        }
+    });
+ 
+    if (existingUser) {
+        throw new Error("Email already exists");
+    }
+    ...
+}
+```
+
+#### 错误
+
+`registerUser` 方法未能正确处理大小写问题，并且默认情况下依赖数据库或用户界面框架来处理大小写不敏感性。因此，在实际应用中，用户可能会使用大小写不同的方式注册相同的电子邮件地址（例如，`user@example.com` 和 `USER@example.com`）。
+
+#### 影响
+
+- 因为电子邮件大小写不匹配导致用户登录认证失败。
+- 由于用户身份重复从而产生漏洞。
+- 数据不一致使用户身份管理变得复杂。
+
+#### 测试方法 1：单元测试。
+
+单元测试仅验证代码本身，因此电子邮件大小写的验证依赖于执行 SQL 查询的数据库。由于单元测试并非针对真实数据库运行，所以无法发现诸如大小写敏感性之类的问题。
+
+#### 测试方法 2：端到端测试或人工检查。
+
+这些验证措施只能在代码部署到预发布环境后才能发现问题。虽然自动化能够有所帮助，但在开发周期的这一阶段检测问题会延迟对开发人员的反馈，并使修复工作变得更加耗时和昂贵。
+
+#### 测试方法 3：在单元测试中通过 mock 对象模拟数据库交互。
+
+一种可行的方法是模拟数据库层，定义模拟的存储库，使其返回错误信息，从而编写可以快速执行的单元测试：
+
+```javascript
+test('should prevent registration with same email in different case', async () => {
+  const userService = new UserRegistrationService(new MockRepository());
+  await userService.registerUser({ email: 'user@example.com', password: 'password123' });
+  await expect(userService.registerUser({ email: 'USER@example.com', password: 'password123' }))
+    .rejects.toThrow('Email already exists');
+});
+```
+
+上述示例中，通过模拟存储库创建 `userService`，该存储库将保存数据库的内存表示形式，即用户信息保存在 map 中。模拟存储库会检测用户是否已重复登录（可能使用不区分大小写的用户名作为键），并返回预期的错误信息。
+
+我们可以在模拟环境中编写验证逻辑，以重现用户服务或数据库应执行的操作。每当需要更改用户验证逻辑时（例如不再允许包含特殊字符），就必须同时更改模拟环境，否则测试将依据过时的验证状态进行验证。如果整个代码库都广泛使用模拟环境，维护工作将会非常困难。
+
+为避免这种情况，我们认为应当采用与所依赖的服务相似的真实模型进行集成测试。上述例子中，使用数据库存储库要比使用模拟对象好得多，能让我们对所测内容更有信心。
+
+#### 测试方法 4：采用“左移”方式进行本地集成测试并使用测试容器（Testcontainers）
+
+无需模拟对象，也不必等待部署环境运行集成测试或端到端测试，并且能够更早发现问题，这是通过让开发人员在自己的开发回路中使用 [Testcontainers](https://docs.docker.com/testcontainers "Testcontainers") 和真实的 PostgreSQL 数据库运行本地集成测试来实现的。
+
+**好处**
+
+- **节省时间**：测试可在数秒内完成，从而能尽早发现问题。
+- **更贴近实际测试**：使用真实数据库而非模拟数据。
+- **确保产品可用性**：确保关键业务逻辑能按预期运行。
+
+# 集成测试示例
+
+我们首先用 Testcontainers 库设置 PostgreSQL 容器，并创建 `userRepository` 来连接到这个 PostgreSQL 实例：
+
+```javascript
+let userService: UserRegistrationService;
+ 
+beforeAll(async () => {
+        container = await new PostgreSqlContainer("postgres:16")
+            .start();
+         
+        dataSource = new DataSource({
+            type: "postgres",
+            host: container.getHost(),
+            port: container.getMappedPort(5432),
+            username: container.getUsername(),
+            password: container.getPassword(),
+            database: container.getDatabase(),
+            entities: [User],
+            synchronize: true,
+            logging: true,
+            connectTimeoutMS: 5000
+        });
+        await dataSource.initialize();
+        const userRepository = dataSource.getRepository(User);
+        userService = new UserRegistrationService(userRepository);
+}, 30000);
+```
+
+初始化 `userService` 后，就可以通过 `registerUser` 方法在真实的 PostgreSQL 实例中测试用户注册：
+
+```javascript
+test('should prevent registration with same email in different case', async () => {
+  await userService.registerUser({ email: 'user@example.com', password: 'password123' });
+  await expect(userService.registerUser({ email: 'USER@example.com', password: 'password123' }))
+    .rejects.toThrow('Email already exists');
+});
+```
+
+# 为何此方法有效
+
+- 通过 Testcontainers 使用真实 PostgreSQL 数据库
+- 验证不区分大小写的电子邮件唯一性
+- 验证电子邮件存储格式
+
+# Testcontainers 如何提供帮助
+
+[Testcontainers 模块](https://testcontainers.com/modules "Testcontainers 模块")为最流行的技术提供了预配置实现，使得编写可靠的测试比以往任何时候都更加容易。无论应用依赖数据库、消息代理、AWS（通过 LocalStack）这样的云服务，还是其他微服务，Testcontainers 都有相关模块可以简化测试流程。
+
+使用 Testcontainers，还可以模拟服务层面的交互，或者通过契约测试来验证待测服务与其他服务之间的交互方式。将这种方法与针对真实依赖项的本地测试相结合，Testcontainers 为本地集成测试提供了全面解决方案，并消除了对共享集成测试环境的需求，而这些环境通常难以建立和管理，且成本高昂。要运行 Testcontainers 测试，需要 Docker 环境来启动容器。[Docker Desktop](https://www.docker.com/products/docker-desktop "Docker Desktop") 确保了与 Testcontainers 在本地测试中的无缝兼容性。
+
+# Testcontainers Cloud：为高效团队提供可扩展测试解决方案
+
+Testcontainers 是一款出色的工具，可以在本地实现与真实依赖的集成测试。如果想进一步推进测试工作，将 Testcontainers 扩展到整个团队、监控用于测试的镜像，或者在持续集成中无缝运行，那么应该考虑使用 Testcontainers Cloud。它提供了临时环境，无需管理专门的测试基础设施所带来的开销。在本地和持续集成中使用 Testcontainers Cloud 可确保测试结果的一致性，让我们对代码更改更有信心。此外，Testcontainers Cloud 允许我们在持续集成中跨多个流水线无缝运行集成测试，有助于在大规模范围内保持高质量标准。最后，Testcontainers Cloud 更加安全，非常适合对容器安全机制有更严格要求的团队和企业。
+
+# 评估“测试左移”对业务的影响
+
+如上所述，使用 Testcontainers 进行“测试左移”能显著提升缺陷检测率和检测时间，并减少开发人员的上下文切换次数。让我们以上述例子为例，比较不同生产部署流程以及早期测试如何影响开发人员的工作效率。
+
+#### 传统工作流程（共享集成环境）
+
+##### 流程分解：
+
+传统工作流程包括编写功能代码、在本地运行单元测试、提交更改以及为外部循环中的验证流程创建拉取请求。如果在外部循环中检测到错误，开发人员必须返回集成开发环境，重复在本地运行单元测试以及其他步骤以验证修复结果的过程。
+
+![图1：按每个步骤所花费的时间划分的传统共享集成环境工作流。](https://image.deepnomind.com/blog/image/fa9b9f79a0fff24a173c62ee4c10f904)
+
+**变更处理时间（LTC，Lead Time for Changes）**：发现并修复该错误至少需要 1 到 2 个小时（具体时间还取决于持续集成/持续部署系统的负载以及已有操作规范）。最佳情况下，从代码提交到生产部署大约需要 2 个小时。而在最糟糕的情况下，如果需要进行多次迭代，可能需要数小时甚至数天时间。
+
+**部署频率（DF，Deployment Frequency）影响**：由于修复流水线故障大约需要 2 个小时，而且每天有 8 小时的工作时间限制，所以实际上每天能够进行的部署次数最多为 3 至 4 次。如果出现多次故障，部署频率还会进一步降低。
+
+**额外相关开销**：流水线运行时以及共享集成环境的维护费用。
+
+**开发人员上下文切换**：由于错误检测大约在代码提交后 30 分钟才进行，开发人员会失去专注力。他们在不断进行上下文切换、调试之后，认知负荷会进一步增加，之后还得再次进行上下文切换。
+
+#### 左移式工作流（使用 Testcontainers 进行本地集成测试）
+
+##### 流程分解：
+
+左移式工作流更为简单，始于编写代码并运行单元测试。开发者无需在外部循环中运行集成测试，而是可以在内部循环中在本地运行测试以排查和解决问题。在继续进行下一步和进入外部循环之前，会再次验证变更。
+
+![图2：使用 Testcontainers 进行本地集成测试，按每个步骤所花费的时间划分工作流。反馈循环要快得多，为开发人员节省了时间，减少了下游的麻烦。](https://image.deepnomind.com/blog/image/64aeb5a0e57c8ad69a71c4bd33d0927e)
+
+**变更处理时间（LTC，Lead Time for Changes）**：在开发人员内部循环中发现并修复错误所需的时间不到 20 分钟。因此，本地集成测试相较于在共享集成环境中进行测试，能至少使缺陷识别速度提高 65%。
+
+**部署频率（DF，Deployment Frequency）影响**：由于缺陷在 20 分钟内就在本地被发现并修复，因此流水线可以直接对接生产环境，每天可进行 10 次或更多部署。
+
+**额外相关开销**：消耗了 5 分钟的 Testcontainers 云服务时间。
+
+**开发人员上下文切换**：对于开发人员而言，无需进行上下文切换。因为本地运行的测试能够即时反馈代码更改情况，并使开发人员能够专注于集成开发环境（IDE）以及内部循环中。
+
+# 要点总结
+
+|     |传统工作流（共享集成环境）|左移工作流（利用 testcontainer 进行本地集成测试）|改进和进一步参考|
+| --- | --- | --- | --- |
+|**更快的变更前置时间（LTC）**|代码更改在数小时或数天内得到验证。开发人员等待共享 CI/CD 环境。|在几分钟内验证代码更改。测试是即时的和本地的。|**变更交付周期缩短 65%（LTC）** —— [微软](https://learn.microsoft.com/en-us/devops/develop/shift-left-make-testing-fast-reliable "Shift Left make testing fast reliable")。通过左移实践，将交付周期从数天缩短至数小时。|
+|**更高部署频率（DF）**|由于验证周期较慢，每天、每周甚至每月进行一次部署。|持续测试允许每天进行多次部署。|**部署频率提升 2 倍以上** —— [2024 DORA 报告](https://dora.dev "2024 DORA 报告")显示左移实践的部署频率超过两倍。精英团队的部署频率提高了 182 倍。|
+|**更低的变更失败率（CFR）**|Bug 逃逸到生产环境中会引发代价高昂的回滚和紧急修复。|在 CI/CD 中更早发现更多 bug，从而减少生产失败。|**更低的变更失败率** —— [IBM 系统科学研究所](https://www.ibm.com/think/topics/bug-tracking "IBM 系统科学研究所")估计，在生产中发现的缺陷，其修复成本是早期发现的 15 倍。|
+|**更快的平均恢复时间（MTTR）**|由于在共享环境中进行复杂调试，需要花费数小时、数天甚至数周的时间修复问题。|通过本地测试快速解决 bug，在几分钟内验证修复。|**更快的 MTTR** —— [DORA 精英团队](https://cloud.google.com/devops/state-of-devops "DORA 精英团队") 可以在不到一个小时内恢复服务，相比之下，低效团队需要几周到一个月的时间。|
+|**节约成本**|昂贵的共享环境、缓慢的流水线、高昂的维护费用。|消除昂贵的测试环境，减少基础设施开支。|**显著节约成本** —— [ThoughtWorks 技术雷达](https://www.thoughtworks.com/radar/techniques/enterprise-wide-integration-test-environments "Enterprise wide integration test environments")指出，共享集成环境既脆弱又昂贵。|
+
+*表 1：通过左移工作流和 Testcontainers 进行本地测试来改进关键指标的总结*
+
+# 结论
+
+测试左移能够提高软件质量，能更早发现问题，减少调试工作量，增强系统稳定性，并全面提升开发人员工作效率。正如我们所看到的，依赖共享集成环境的传统工作流会带来效率低下问题，增加变更的前置时间、部署延迟以及因频繁切换环境而带来的认知负担。相比之下，通过引入 Testcontainers 进行本地集成测试，开发人员可以实现：
+
+- **更快的反馈循环** —— 问题能在几分钟内被识别并解决，从而避免延误。
+- **更可靠的应用行为** —— 在真实环境中进行测试可确保发布版本的可靠性。
+- **减少对昂贵预发环境的依赖** —— 最小化共享基础设施可降低成本并简化 CI/CD 流程。
+- **更好的开发人员工作状态** —— 轻松设置本地测试场景并快速重新运行以进行调试，有助于开发人员专注于创新。
+
+Testcontainers 提供了简便且高效的本地测试方式，能够更早发现昂贵的问题。为了跨团队扩展，开发人员可以考虑使用 Docker Desktop 和 Testcontainers Cloud 在本地、CI 或临时环境中运行单元和集成测试，而无需维护专门的测试基础设施所带来的复杂性。
