@@ -1,0 +1,412 @@
+---
+title: '基于 eBPF 和 Go 实现透明代理'
+date: '2025-10-19'
+tags: ['eBPF','Golang','架构']
+draft: false
+summary: '本文介绍了如何利用 eBPF 的能力，并通过 Go 和 ebpf-go 包实现高性能透明代理。'
+authors: ['default']
+---
+
+>*本文介绍了如何利用 eBPF 的能力，并通过 Go 和 ebpf-go 包实现高性能透明代理。原文：[Transparent Proxy Implementation using eBPF and Go](https://medium.com/@cloudchirp/building-a-transparent-proxy-with-ebpf-50a012237e76 "Transparent Proxy Implementation using eBPF and Go")*
+
+透明代理（transparent proxy），也称为内联代理（inline proxy），可以拦截并重定向客户端请求，而无需修改请求或对客户端进行配置。透明代理对用户来说是不可见的，意味着用户不会察觉到它的存在，也无需调整网络设置。这项技术对于网络管理、安全策略执行、流量监控和优化来说至关重要。透明代理能够执行一系列功能，包括内容过滤、缓存加速、流量控制和负载均衡等。实现透明代理的常用技术包括 TPROXY、NAT 等。
+
+本文将展示如何利用 eBPF 实现透明代理，具体来说就是结合 Go 语言以及 [ebpf-go](https://ebpf-go.dev "ebpf-go") 包来实现。
+
+![](https://image.deepnomind.com/blog/image/0c7ee08664fdcf4807d01309aeb68a0c)
+
+>⚠️注意：关于 eBPF，本文不会涉及太多细节，如果对这个话题不太熟悉，可以查看其他文章。
+>
+>[Introduction to BPF and eBPF](https://levelup.gitconnected.com/introduction-to-bpf-and-ebpf-798dc4befd0b "Introduction to BPF and eBPF")
+>
+>[Security Evaluation: eBPF vs. WebAssembly](https://cloudchirp.medium.com/security-evaluation-ebpf-vs-webassembly-738df2566b18 "Security Evaluation: eBPF vs. WebAssembly")
+>
+>[eBPF-Powered Load Balancing for SO_REUSEPORT](https://levelup.gitconnected.com/ebpf-powered-load-balancing-for-so-reuseport-30acb395e1d6 "eBPF-Powered Load Balancing for SO_REUSEPORT")
+>
+>[Optimizing Local Socket Communication: SOCKMAP and eBPF](https://levelup.gitconnected.com/optimizing-local-socket-communication-sockmap-and-ebpf-0edf1a1cea3c "Optimizing Local Socket Communication: SOCKMAP and eBPF")
+>
+>[eBPF sk_lookup: Socket Lookup and Redirection](https://levelup.gitconnected.com/ebpf-sk-lookup-socket-lookup-and-redirection-08643062fab2 "eBPF sk_lookup: Socket Lookup and Redirection")
+
+# eBPF 在透明代理中的应用
+
+扩展的伯克利数据包过滤器（eBPF，Extended Berkeley Packet Filter）是一种强大工具，可用于实现透明代理，能够在 Linux 内核中运行沙盒程序。这种能力使其能够进行高性能数据包处理和实时流操作，避免在用户空间和内核空间之间进行上下文切换所带来的开销。
+
+用 eBPF 实现透明代理涉及三个 eBPF 程序，每个程序负责网络拦截和转发的不同功能：
+
+- **连接建立时的地址替换**：第一个 eBPF 程序 `cgroup/connect4` 附加到 `connect` 系统调用。当客户端尝试连接目标服务器时，此程序拦截连接尝试，将目标 IP 地址和端口替换为本地透明代理的地址和端口 —— 这种重定向对客户端来说是完全透明的。同时，原目标地址和端口被存储在 `map_socks` eBPF 映射中，以便其他 eBPF 程序稍后引用此信息。
+
+- **连接建立后的源地址记录**：第二个 eBPF 程序 `sockops` 在代理与目标服务器成功建立连接后执行。其主要功能是记录连接的源地址和端口。此信息会更新 `map_socks` eBPF 映射中的相应条目。此外，源端口和套接字的 cookie（唯一标识符）被映射到 `map_ports` eBPF 映射中，确保所有必要的连接详情可供其他 eBPF 程序使用。此步骤对于维护网络连接状态至关重要。
+
+- **基于原始目标信息的转发**：第三个 eBPF 程序 `cgroup/getsockopt` 在 Pipy 代理使用 `getsockopt` 调用查询原始目标信息时被触发。该程序通过源端口从 `map_ports` 中获取原始套接字的 cookie，然后访问存储在 `map_socks` 中的原始目标信息。利用这些信息，与原始目标服务器建立连接，并转发客户端请求。从而确保流量在经过代理处理后能透明的重定向到其预期的目的地。
+
+这三个程序都链接到特定的 cgroup，在我们的例子中是根 cgroup，但也可以是其他任何 cgroup。从而确保只有当该组内的进程执行指定系统调用（syscalls）时，才会被激活。目前，我们的配置仅代理 TCP IPv4 连接，但也可以适应其他协议。
+
+>*下图展示了整个设置，每种颜色代表一个不同阶段，按以下顺序执行：*
+>
+>***红色 -> 绿色 -> 紫色 -> 粉色***
+
+![](https://image.deepnomind.com/blog/image/5e76b8ab90cda722478b882c844d0e0e)
+
+这就是理论上需要的全部内容，接下来我们看一下代码。
+
+>*💡提示：代码里添加了一些有用的注释帮助读者理解*
+
+# 用户空间代码
+
+```golang
+package main
+
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -type Config proxy proxy.c
+
+import (
+ "fmt"
+ "io"
+ "log"
+ "net"
+ "os"
+ "syscall"
+ "time"
+ "unsafe"
+
+ "github.com/cilium/ebpf"
+ "github.com/cilium/ebpf/link"
+ "github.com/cilium/ebpf/rlimit"
+)
+
+const (
+ CGROUP_PATH = "/sys/fs/cgroup" // Root cgroup 路径
+ PROXY_PORT      = 18000 // 代理监听的端口
+ SO_ORIGINAL_DST = 80 // 获取原目标地址的套接字选项
+)
+
+// SockAddrIn 是用于保存通过 SO_ORIGINAL_DST 检索的 IPv4 sockaddr_in 结构。
+type SockAddrIn struct {
+ SinFamily uint16
+ SinPort   [2]byte
+ SinAddr   [4]byte
+ // 填充以匹配 sockaddr_in 大小
+ Pad [8]byte
+}
+
+// getsockopt 辅助函数
+func getsockopt(s int, level int, optname int, optval unsafe.Pointer, optlen *uint32) (err error) {
+ _, _, e := syscall.Syscall6(syscall.SYS_GETSOCKOPT, uintptr(s), uintptr(level), uintptr(optname), uintptr(optval), uintptr(unsafe.Pointer(optlen)), 0)
+ if e != 0 {
+  return e
+ }
+ return
+}
+
+// HTTP 代理请求处理程序
+func handleConnection(conn net.Conn) {
+ defer conn.Close()
+
+ // 在 Go 中需要通过 RawConn 对底层 socket 文件描述符执行低级操作。
+ // 从而让我们可以用 getsockopt 来检索由 SO_ORIGINAL_DST 选项设置的原始目的地址，
+ // 该信息不能通过 Go 高级网络 API 直接访问。
+ rawConn, err := conn.(*net.TCPConn).SyscallConn()
+ if err != nil {
+  log.Printf("Failed to get raw connection: %v", err)
+  return
+ }
+
+ var originalDst SockAddrIn
+ // 如果 Control 不为 nil，则在创建网络连接后，在绑定到操作系统之前调用。
+ rawConn.Control(func(fd uintptr) {
+  optlen := uint32(unsafe.Sizeof(originalDst))
+  // 通过 SO_ORIGINAL_DST 选项进行系统调用来检索原始目的地址。
+  err = getsockopt(int(fd), syscall.SOL_IP, SO_ORIGINAL_DST, unsafe.Pointer(&originalDst), &optlen)
+  if err != nil {
+   log.Printf("getsockopt SO_ORIGINAL_DST failed: %v", err)
+  }
+ })
+
+ targetAddr := net.IPv4(originalDst.SinAddr[0], originalDst.SinAddr[1], originalDst.SinAddr[2], originalDst.SinAddr[3]).String()
+ targetPort := (uint16(originalDst.SinPort[0]) << 8) | uint16(originalDst.SinPort[1])
+
+ fmt.Printf("Original destination: %s:%d\n", targetAddr, targetPort)
+
+ // 检查原始目的地址是否可以从代理访问
+ targetConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", targetAddr, targetPort), 5*time.Second)
+ if err != nil {
+  log.Printf("Failed to connect to original destination: %v", err)
+  return
+ }
+ defer targetConn.Close()
+
+ fmt.Printf("Proxying connection from %s to %s\n", conn.RemoteAddr(), targetConn.RemoteAddr())
+
+  // 下面的代码创建了两个数据传输通道：
+  // - 从客户端到目标服务器（由单独例程处理）。
+  // - 从目标服务器到客户端（由主程序处理）。
+ go func() {
+  _, err = io.Copy(targetConn, conn)
+  if err != nil {
+   log.Printf("Failed copying data to target: %v", err)
+  }
+ }()
+ _, err = io.Copy(conn, targetConn)
+ if err != nil {
+  log.Printf("Failed copying data from target: %v", err)
+ }
+}
+
+func main() {
+ // 删除 <5.11 内核的资源限制。
+ if err := rlimit.RemoveMemlock(); err != nil { 
+  log.Print("Removing memlock:", err)
+ }
+
+ // 加载编译好的 eBPF ELF 并将其加载到内核中
+ // 注意：也可以 pin eBPF 程序
+ var objs proxyObjects
+ if err := loadProxyObjects(&objs, nil); err != nil {
+   log.Print("Error loading eBPF objects:", err)
+ }
+ defer objs.Close()
+
+ // 将 eBPF 程序附加到 root cgroup
+ connect4Link, err := link.AttachCgroup(link.CgroupOptions{
+  Path:    CGROUP_PATH, 
+  Attach:  ebpf.AttachCGroupInet4Connect,
+  Program: objs.CgConnect4,
+ })
+ if err != nil {
+   log.Print("Attaching CgConnect4 program to Cgroup:", err)
+ }
+ defer connect4Link.Close() 
+
+ sockopsLink, err := link.AttachCgroup(link.CgroupOptions{
+  Path:    CGROUP_PATH,
+  Attach:  ebpf.AttachCGroupSockOps,
+  Program: objs.CgSockOps,
+ })
+ if err != nil {
+   log.Print("Attaching CgSockOps program to Cgroup:", err)
+ }
+ defer sockopsLink.Close() 
+
+ sockoptLink, err := link.AttachCgroup(link.CgroupOptions{
+  Path:    CGROUP_PATH,
+  Attach:  ebpf.AttachCGroupGetsockopt,
+  Program: objs.CgSockOpt,
+ })
+ if err != nil {
+   log.Print("Attaching CgSockOpt program to Cgroup:", err)
+ }
+ defer sockoptLink.Close() 
+
+ // 在 localhost 上启动代理服务器
+ // 本例中只演示了 IPv4，但同样方法也可用于 IPv6
+ proxyAddr := fmt.Sprintf("127.0.0.1:%d", PROXY_PORT)
+ listener, err := net.Listen("tcp", proxyAddr)
+ if err != nil {
+  log.Fatalf("Failed to start proxy server: %v", err)
+ }
+ defer listener.Close()
+
+ // 更新 proxyMaps 映射表以包含代理服务器配置信息，因为我们需要知道代理服务器的进程标识符，
+ // 以便过滤掉由代理服务器自身生成的 eBPF 事件，从而避免其循环代理自身的数据包。
+ var key uint32 = 0
+ config := proxyConfig{
+  ProxyPort: PROXY_PORT,
+  ProxyPid: uint64(os.Getpid()),
+ }
+ err = objs.proxyMaps.MapConfig.Update(&key, &config, ebpf.UpdateAny)
+ if err != nil {
+  log.Fatalf("Failed to update proxyMaps map: %v", err)
+ }
+
+ log.Printf("Proxy server with PID %d listening on %s", os.Getpid(), proxyAddr)
+ for {
+  conn, err := listener.Accept()
+  if err != nil {
+   log.Printf("Failed to accept connection: %v", err)
+   continue
+  }
+
+  go handleConnection(conn)
+ }
+}
+```
+
+# 内核空间代码
+
+```golang
+//go:build ignore
+#include <stddef.h>
+#include <linux/bpf.h>
+#include <linux/netfilter_ipv4.h>
+#include <linux/in.h>
+#include <sys/socket.h>
+
+#include "bpf-builtin.h"
+#include "bpf-utils.h"
+
+#undef bpf_printk
+#define bpf_printk(fmt, ...)                            \
+({                                                      \
+        static const char ____fmt[] = fmt;              \
+        bpf_trace_printk(____fmt, sizeof(____fmt),      \
+                         ##__VA_ARGS__);                \
+})
+
+#define MAX_CONNECTIONS 20000
+
+struct Config {
+  __u16 proxy_port;
+  __u64 proxy_pid;
+};
+
+struct Socket {
+  __u32 src_addr;
+  __u16 src_port;
+  __u32 dst_addr;
+  __u16 dst_port;
+};
+
+struct {
+  int (*type)[BPF_MAP_TYPE_ARRAY];
+  int (*max_entries)[1];
+  __u32 *key;
+  struct Config *value;
+} map_config SEC(".maps");
+
+struct {
+  int (*type)[BPF_MAP_TYPE_HASH];
+  int (*max_entries)[MAX_CONNECTIONS];
+  __u64 *key;
+  struct Socket *value;
+} map_socks SEC(".maps");
+
+struct {
+  int (*type)[BPF_MAP_TYPE_HASH];
+  int (*max_entries)[MAX_CONNECTIONS];
+  __u16 *key;
+  __u64 *value;
+} map_ports SEC(".maps");
+
+// 当进程（在附加了该钩子的 cgroup 中）调用 connect() 系统调用时触发该钩子
+// 钩子将连接重定向到透明代理，但将原始目的地址和端口存储在 map_socks 中
+SEC("cgroup/connect4")
+int cg_connect4(struct bpf_sock_addr *ctx) {
+  // 只转发 IPv4 TCP 连接
+  if (ctx->user_family != AF_INET) return 1;
+  if (ctx->protocol != IPPROTO_TCP) return 1;
+
+  // 防止代理代理自己
+  __u32 key = 0;
+  struct Config *conf = bpf_map_lookup_elem(&map_config, &key);
+  if (!conf) return 1;
+  if ((bpf_get_current_pid_tgid() >> 32) == conf->proxy_pid) return 1;
+
+  // 该字段包含传递给 connect() 系统调用的 IPv4 地址，即连接到此套接字的目标地址及端口。
+  __u32 dst_addr = ntohl(ctx->user_ip4);
+  // 该字段包含传递给 connect() 系统调用的端口号
+  __u16 dst_port = ntohl(ctx->user_port) >> 16;
+  // 目的套接字的唯一标识符
+  __u64 cookie = bpf_get_socket_cookie(ctx);
+
+  // 在 cookie key 下存储目标套接字
+  struct Socket sock;
+  __builtin_memset(&sock, 0, sizeof(sock));
+  sock.dst_addr = dst_addr;
+  sock.dst_port = dst_port;
+  bpf_map_update_elem(&map_socks, &cookie, &sock, 0);
+
+  // 将连接重定向到代理
+  ctx->user_ip4 = htonl(0x7f000001); // 127.0.0.1 == proxy IP
+  ctx->user_port = htonl(conf->proxy_port << 16); // Proxy port
+
+  bpf_printk("Redirecting client connection to proxy\n");
+
+  return 1;
+}
+
+// 当特定 cgroup 上有套接字操作（重传超时，建立连接等）时，该程序被调用。
+// 在与代理成功建立连接后，记录客户端源地址和端口
+SEC("sockops")
+int cg_sock_ops(struct bpf_sock_ops *ctx) {
+  // 只转发 IPv4 连接
+  if (ctx->family != AF_INET) return 0;
+
+  // 已建立连接的活跃套接字
+  if (ctx->op == BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB) {
+    __u64 cookie = bpf_get_socket_cookie(ctx);
+
+    // 在 map 中查找对应 cookie
+    // 如果 socket 存在，存储源端口和 socket 映射
+    struct Socket *sock = bpf_map_lookup_elem(&map_socks, &cookie);
+    if (sock) {
+      __u16 src_port = ctx->local_port;
+      bpf_map_update_elem(&map_ports, &src_port, &cookie, 0);
+    }
+  }
+
+  bpf_printk("sockops hook successful\n");
+
+  return 0;
+}
+
+// 代理通过 getsockopt SO_ORIGINAL_DST 查询原始目的地信息时触发。
+// 该程序利用客户端源端口从 map_ports 中获取套接字 cookie，
+// 再从 map_socks 中获取原始目标信息，
+// 然后与原始目标建立连接并转发客户端请求。
+SEC("cgroup/getsockopt")
+int cg_sock_opt(struct bpf_sockopt *ctx) {
+  // SO_ORIGINAL_DST 套接字选项主要用于网络地址转换（NAT）和透明代理。
+  // 在典型 NAT 或透明代理设置中，传入的数据包从原始目的地重定向到代理服务器。
+  // 代理服务器在接收到数据包后，通常需要知道原始目的地址，以便以合适的方式处理流量。
+  // 这就是 SO_ORIGINAL_DST 发挥作用的地方。
+  if (ctx->optname != SO_ORIGINAL_DST) return 1;
+  // 只转发 IPv4 TCP 连接
+  if (ctx->sk->family != AF_INET) return 1;
+  if (ctx->sk->protocol != IPPROTO_TCP) return 1;
+
+  // 获取客户端源端口。
+  // 实际上应该是 sk->dst_port，因为通过设置了 SO_ORIGINAL_DST 套接字选项的 getsockopt() 系统调用会获取客户端原始目的端口，所以这是在查询客户端的最终目的端口。
+  __u16 src_port = ntohs(ctx->sk->dst_port);
+
+  // 基于客户端 src_port 获取 socket cookie
+  __u64 *cookie = bpf_map_lookup_elem(&map_ports, &src_port);
+  if (!cookie) return 1;
+
+  // 通过该 cookie（套接字标识符），从 map_socks 中获取原始套接字（客户端连接至目标端的套接字）
+  struct Socket *sock = bpf_map_lookup_elem(&map_socks, cookie);
+  if (!sock) return 1;
+
+  struct sockaddr_in *sa = ctx->optval;
+  if ((void*)(sa + 1) > ctx->optval_end) return 1;
+
+  // 与原目标地址建立连接
+  ctx->optlen = sizeof(*sa);
+  sa->sin_family = ctx->sk->family; // 地址族
+  sa->sin_addr.s_addr = htonl(sock->dst_addr); // 目标地址
+  sa->sin_port = htons(sock->dst_port); // 目标端口
+  ctx->retval = 0;
+
+  bpf_printk("Redirecting connection to original destination\n");
+
+  return 1;
+}
+
+char __LICENSE[] SEC("license") = "GPL";
+```
+
+如果想尝试一下，这是 GitHub 仓库链接：[GitHub - dorkamotorka/transparent-proxy-ebpf](https://github.com/dorkamotorka/transparent-proxy-ebpf/tree/main "GitHub - dorkamotorka/transparent-proxy-ebpf")
+
+# 性能评估
+
+下面是基本性能测试，以评估该 eBPF 项目对主机服务器的影响，特别关注在拦截流量时的延迟和 CPU 负载情况。测试内容包括测量 10，000 次请求的平均延迟。
+
+![](https://image.deepnomind.com/blog/image/e57111ebf339d9bb80c5706c3e2feeb1)
+
+研究结果表明，eBPF 程序平均会带来约 **1 毫秒**固定开销。此外，每个钩子引入的平均 CPU 负载情况如下：套接字操作为 **0.4%**，`cgroup/connect4` 为 **0.1%**，`cgroup/getsockopt` 为 **0.09%**。基本上没什么影响。
+
+研究结果表明，尽管 eBPF 程序会带来额外延迟和 CPU 负载，但其带来的流量拦截优势却足以弥补这些不足。
+
+>*⚠️ **注意**：此实现的灵感来源于 [Pipy](https://github.com/flomesh-io/pipy "Pipy")，通过使用 ebpf-go 添加了用户空间实现，从而扩展其功能。此外，还对内核空间代码进行了少量修改，并添加了多处注释以增强可读性。*
+
+# 结论
+
+总之，基于 eBPF 实现透明代理为网络拦截和转发提供了强大的解决方案。通过利用 eBPF 的能力，例如高性能数据包处理和在 Linux 内核中进行实时流量操作，透明代理能够高效管理各种用途的网络流量，包括安全执行、流量监控和优化。示例展示了 eBPF 与 Go 的集成，展示了不同 eBPF 程序如何无缝协作以实现透明代理功能。这种方法不仅确保了最小的开销，还为扩展代理功能以支持除 TCP IPv4 连接之外的其他协议提供了灵活性。

@@ -1,0 +1,177 @@
+---
+title: 'Go 设计模式：Flyweight'
+date: '2025-10-08'
+tags: ['Golang', '设计模式']
+draft: false
+summary: '本文介绍了用于管理大量相似小对象的 Flyweight 模式，介绍了其设计背景、思路、实现以及优缺点。'
+authors: ['default']
+---
+
+>*本文介绍了用于管理大量相似小对象的 Flyweight 模式，介绍了其设计背景、思路、实现以及优缺点。原文：[Design Patterns in Go: Flyweight](https://medium.com/@hitzhangjie/design-patterns-in-go-flyweight-59ce5d80449a "Design Patterns in Go: Flyweight")*
+
+![](https://image.deepnomind.com/blog/image/d86a6ae31ca890cd8464556b546898b0)
+
+**背景：**
+
+由于创建了太多类似对象或副本，内存消耗非常高！这些对象（或副本）包含若干相同属性，以及其他一些各不相同的字段。
+
+应当创建这些对象，但如何降低内存消耗，以及如何避免创建冗余、不必要的对象，都是需要解决的问题。
+
+**解决方案：**
+
+Flyweight 模式适用于需要大量对象被创建并存储在内存中的场景。例如，图形编辑器需要处理成千上万形状对象，如线条、圆形、矩形等。
+
+为每种形状创建完整对象会非常耗费内存资源，尤其考虑到这些对象中有很多相同属性，如颜色、线条样式、填充图案等。
+
+如果没有 Flyweight，编辑器将会占用大量内存，为每个对象创建共享状态的冗余副本。这种做法效率低下，还可能导致应用程序因内存使用过多而运行速度变慢。
+
+Flyweight 模式***通过将共享的内部状态与外部特定对象状态分离***，从而提供了解决方案。内部状态存储在 Flyweight 对象中，这些对象可以在所有形状对象之间共享。例如，圆形的 Flyweight 对象将存储绘制圆形所需的数据。
+
+特定形状的外部状态（如对象坐标）存储在外部，并与 Flyweight 引用相关联，从而显著节省内存，并通过复用 Flyweight 对象而非复制状态来提高编辑器性能。
+
+这种背景情况促使人们开发出了 Flyweight 解决方案，以便在内存资源有限的环境中高效处理大量对象。
+
+![flyweight 模式](https://image.deepnomind.com/blog/image/5e78d5aea9a7b9f37ae28b8729ec7259)
+
+在这个例子中，我们通过画点来画圆，我们通过画粒子来画点。粒子包含不变的属性，比如颜色。这个例子很简单，但确实表达了 Flyweight  模式的含义。
+
+源代码：
+
+```go
+/////////////////////////// flyweight.go ///////////////////////////
+package flyweight
+
+import (
+ "fmt"
+ "math"
+)
+
+// Shape draw this shape at pos
+type Shape interface {
+ Draw()
+}
+
+type Color string
+
+const (
+ Red   = "red"
+ Blue  = "blue"
+ Green = "green"
+)
+
+var pf = &ParticleFactory{
+ particles: make(map[Color]*Particle),
+}
+
+// ParticleFactory creates particles according to `Color`
+type ParticleFactory struct {
+ particles map[Color]*Particle
+}
+
+// GetParticle returns reusable underlying particle instance with `Color`
+// Here we doesn't consider safe when use it concurrently.
+func (pf ParticleFactory) GetParticle(c Color) *Particle {
+ if v, ok := pf.particles[c]; ok {
+  return v
+ }
+ v := &Particle{c}
+ pf.particles[c] = v
+ return v
+}
+
+// Particle maintains the intrinsic state including color
+type Particle struct {
+ color Color
+ // ...
+ // ...
+}
+
+// Draw draw particle at `pos`, pos is the extrinsic state maintained
+// by Point or Circle
+func (c *Particle) Draw(pos Pos) {
+ fmt.Printf("\t...Pos.X + i, p.Pos.Y + j})
+  }
+ }
+}
+
+func NewCircle(pos Pos, raidus float64, color Color, weight float64) *Circle {
+ return &Circle{
+  Color:      color,
+  Center:     pos,
+  Radius:     raidus,
+  LineWeight: weight,
+ }
+}
+
+// Circle a circle
+type Circle struct {
+ Color      Color
+ Center     Pos
+ Radius     float64
+ LineWeight float64
+}
+
+// Draw circle will be rendered by different Points according to the formula
+// (x-c.X)^2 + (y-c.Y)^2 = c.Raidus^2
+func (c Circle) Draw() {
+ fmt.Printf("draw circle at <%.1f, %.1f> with raidus %.1fcm, weight:%.1f\n",
+  c.Center.X,
+  c.Center.Y,
+  c.Radius,
+  c.LineWeight)
+
+ // (x-pos.X)^2 + (y-pos.Y)^2 = c.Radius^2
+ for x := c.Center.X - c.Radius; x < c.Center.X+c.Radius; x += 0.1 {
+  y := math.Pow(math.Pow(c.Radius, 2)-math.Pow(x-c.Center.X, 2), 0.5) + c.Center.Y
+  p := &Point{
+   Particle:   pf.GetParticle(c.Color),
+   LineWeight: c.LineWeight,
+  }
+  p.Pos = Pos{x, y}
+  p.Draw()
+
+  p.Pos = Pos{x, -y}
+  p.Draw()
+ }
+}
+
+type Pos struct {
+ X, Y float64
+}
+```
+
+下面是测试：
+
+```go
+package flyweight_test
+
+import (
+ "flyweight"
+ "testing"
+)
+
+func TestFlyweight(t *testing.T) {
+ c := flyweight.NewCircle(flyweight.Pos{10, 10}, 5, flyweight.Red, 0.3)
+ c.Draw()
+}
+```
+
+*注：我们将所有源代码放入同一个代码块中，以保持文章布局的整洁。如果想运行测试代码，请克隆该代码库：[go-patterns](http://github.com/hitzhangjie/go-patterns "go-patterns")。*
+
+Flyweight 设计模式在需要支持大量具有仅通过少数特征标识即可区分的相似对象的场景中特别有用。该模式能够最大限度减少内存使用量，并在创建大量小对象时提高性能。
+
+**优点：**
+
+- **内存效率**：Flyweight 模式的核心优势在于能够减少应用的内存占用。通过在多个实例之间共享状态，能够显著减少这些实例所占用的内存量。
+- **性能提升**：共享状态使得对象的访问和检索速度更快，因为创建新对象（本质上是现有对象的副本）的开销较小。在处理大量相似对象时，这一点尤其有用。
+- **可扩展性**：Flyweight 模式通过优化类似对象的实例创建数量来增强应用程序的可扩展性，从而更轻松应对增加的负载或更大的数据集。
+- **高效的状态管理**：由于只在 Flyweight 中存储内部状态（不同状态之间会有所变化），而外部状态（在多个对象之间共享）则作为参数传递，因此该模式有助于更高效的管理复杂系统，减少不必要的数据复制。
+
+**缺点：**
+
+- **复杂性与维护问题**：正确实施 Flyweight 模式需要仔细考虑，以确保共享状态得到妥善管理，同时避免出现并发问题或内存泄漏。这种复杂性可能会使不熟悉该模式的开发人员感到困难，从而造成维护难题。
+- **增加客户端代码复杂性**：使用 Flyweight 模式会使客户端代码变得复杂，因为客户端通常需要将外部状态作为方法参数传递，增加了开发人员的额外负担，并可能增加他们的认知负荷。
+- **潜在并发问题**：如果多个线程同时访问共享状态，就需要进行仔细的同步以防止竞争条件或其他由对可变共享数据的并发访问引起的并发问题。
+- **适用性有限**：Flyweight 模式非常专业化，只有在存在大量相似对象共享相同状态的情况下才具有优势。对于不符合这一标准的系统，使用 Flyweight 模式可能会增加不必要的复杂性，而不会带来任何性能或内存方面的优势。
+
+总之，尽管 Flyweight 模式在大规模应用中处理众多相似小对象时能显著优化资源利用，但其在实现上需要谨慎考虑和操作，以避免使系统维护变得复杂，并可能引入与并发管理相关的新问题。
