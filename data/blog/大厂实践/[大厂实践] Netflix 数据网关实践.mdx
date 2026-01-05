@@ -1,0 +1,260 @@
+---
+title: '[大厂实践] Netflix 数据网关实践'
+date: '2025-07-21'
+tags: ['大厂实践','架构']
+draft: false
+summary: '本文介绍了 Netflix 为了提供统一的数据访问抽象而开发的数据网关，通过数据网关，Netflix 的应用可以通过统一的抽象层访问数据，从而让应用开发和维护与数据存储细节解耦，能够更好的保障数据安全并降低应用复杂度。'
+authors: ['default']
+---
+
+>*本文介绍了 Netflix 为了提供统一的数据访问抽象而开发的数据网关，通过数据网关，Netflix 的应用可以通过统一的抽象层访问数据，从而让应用开发和维护与数据存储细节解耦，能够更好的保障数据安全并降低应用复杂度。原文：[Data Gateway — A Platform for Growing and Protecting the Data Tier](https://netflixtechblog.medium.com/data-gateway-a-platform-for-growing-and-protecting-the-data-tier-f1ed8db8f5c6 "Data Gateway — A Platform for Growing and Protecting the Data Tier")*
+
+![](https://image.deepnomind.com/blog/image/ac1f29f9bdaf2ac576f6347949acff36)
+
+Netflix 在线数据存储团队构建了一个名为“数据网关”的平台，旨在为数据存储工程师提供强大的数据抽象，从而保护 Netflix 应用开发人员免受复杂分布式数据库和非兼容 API 更改的影响。本文数据网关系列文章的第一部分，该系列将展示我们如何利用此平台提升应用开发人员每天用于创建、访问和维护其在线数据的抽象层级。
+
+#### 动机
+
+在 Netflix，我们为数据层采用了大量开源（OSS）技术和数据库，并为这些项目做出了大量贡献，包括 [Apache Cassandra](https://cassandra.apache.org "Apache Cassandra")、[EVCache](https://github.com/Netflix/EVCache "EVCache")（[memcached](https://memcached.org "memcached")）、[OpenSearch](https://opensearch.org "OpenSearch") 等。过去，在线数据平台运维这些数据存储，并通过客户端库提供开源 API。例如，我们运营 Apache Cassandra 集群，并为开发人员提供基于 Thrift 或 Cassandra 查询语言（CQL）协议的客户端库。这种策略让数据平台获得了优势，因为开源意味着更少的工程师可以为更多用户运维更多类型的数据库。然而，虽然这促进了快速扩张，但将应用与 Netflix 无法控制的众多 API 相耦合，从长期来看带来了巨大的维护成本。
+
+大多数数据库 API 接口范围很大，但限制却很少，从而产生了一些使用上的反模式，需要具备高级知识才能避免，而且造成的问题可能需要数年时间才会显现出来。例如，开发人员必须避免向一行或一个字段写入过多数据，而且每个数据存储的限制都不一样。随着 Netflix 工程组织的发展以及用例数量的激增，工程师们在减轻数据库误用和重新设计应用方面承受了更大的负担。这也增加了产品中断的风险，因为大多数关键应用都依赖数据库服务，而数据库迁移本身就存在风险。
+
+此外，某些应用场景需要采用不同数据库相结合的架构，以实现具有可扩展性、可用性和稳定性能的理想 API。随着时间推移，我们发现 Netflix 的开发人员反复采用同样的模式（比如在键值查找中添加缓存），换句话说，就是“重复发明轮子”。
+
+最后，我们不得不将 Netflix 的标准服务发现、远程过程调用容错技术、认证和授权系统与每一个开源数据库进行整合，以便让 Netflix 应用能够使用这些系统。将每一个单独数据库和每个数据库的协议与这些系统进行整合是一项具有挑战性的任务，因为实现方式都各不相同，并且需要不同专家（例如 Memcached 专家、Cassandra 专家等）来进行维护。
+
+#### 引入数据网关
+
+Netflix 数据网关是一个旨在解决这些问题的平台，从而让 Netflix 能够轻松构建和管理稳定可靠的在线数据访问层（DAL，Data Access Layer）。该平台通过使用诸如 gRPC 和 HTTP 等标准 IPC 协议提供定制化 API，简化并保障数据访问的安全性，同时消除后端分布式数据库的复杂性，并防范其使用中的反模式，从而在增强安全性、可靠性和可扩展性的同时实现这些目标。
+
+#### 组件概述
+
+数据网关位于应用与数据库之间，使 Netflix 能够提供用户友好、安全且可靠的大规模数据持久化服务。该平台旨在做到：
+
+**用户友好**：将数据访问层进行集中管理，以便提供符合 Netflix 常规使用模式的 gRPC 或 HTTP API，例如键值或时间序列等。
+
+**安全**：将 mTLS（端到端加密传输）、连接管理、身份验证和授权等功能委托给性能优越的服务网关，作为通用解决方案。
+
+**可靠**：将开源数据存储系统的 API 缩减至仅包含其在大规模环境下仍安全的子集，从而避免反模式，并为包括断路器、背压机制和负载降级等在内的弹性[技术](https://www.infoq.com/presentations/netflix-stateful-cache "Netflix Stateful Cache")提供间接层。
+
+![数据网关实例](https://image.deepnomind.com/blog/image/ac1f29f9bdaf2ac576f6347949acff36)
+
+如上图所述，数据网关的数据面实例由以下部分组成：
+
+- **EC2 实例**：由 Netflix 性能团队优化的适用于高性能、低延迟的标准云计算 Linux 虚拟机。
+- **数据网关代理**：负责协调专用容器镜像并管理健康状态下的服务注册（即发现）的辅助进程。
+- **容器运行时**：运行、监控、重启并连接代理和 DAL 容器的标准 OCI 容器运行时。
+- **Envoy 代理**：作为反向代理的行业标准服务网格容器。
+- **数据抽象层（DAL）**：以容器形式部署的应用程序代码托管专用的 HTTP 或 gRPC 数据访问服务，例如键值服务。
+- **声明式配置**：简洁的声明式配置，提供目标集群和数据面实例状态。
+
+应用客户端通过标准 Netflix 发现服务或 AWS 负载均衡器（例如 ALB/NLB）连接到网关。Envoy 终止 TLS，对每个连接进行授权，然后将请求转发到适当的 DAL 容器，这些容器使用特定于数据库的协议与数据库进行通信以完成每个查询。
+
+#### 配置和声明式交付
+
+声明式配置通过数据网关代理实现单个实例部署，并且还能在整个集群中进行部署。我们将声明式配置分为两类：运行时配置和部署配置。
+
+##### 运行时配置
+
+单个实例的目标状态配置被称为“运行时”配置。这种配置包括所需 DAL 容器组合、环境以及与代理进行网络连接以形成数据面实例的内容。以下是运行时配置示例：
+
+```yaml
+# Configure the proxy to accept protocols
+proxy_config:
+  public_listeners:
+    secure_grpc: {mode: grpc, tls_creds: metatron, authz: gandalf, path: 8980}
+
+# Configure the DAL containers, implementing protocols
+container_dals:
+  cql:
+    container_listeners: {secure_grpc: 8980}
+    image: "dgw-kv"
+  thrift:
+    container_listeners: {secure_grpc: 8980}
+    image: "dgw-kv"
+    env:
+      STORAGE_ENGINE: "thrift"
+
+# Configure advanced wiring of protocols
+wiring:
+  thrift: {mode: shadow, target: cql}
+```
+
+该配置将指定两个名为`cql`和`thrift`的键值 DAL 容器，它们将从`dgw-kv`镜像的生产部署版本创建，并指定代理监听主机端口`8980`以建立双向 TLS（通过 [metatron](https://www.usenix.org/conference/enigma2016/conference-program/presentation/payne "metatron") 进行 mTLS）连接。这个协议被命名为`secure_grpc`，连接基于双向 TLS 进行身份验证，使用 Netflix 的 Gandalf 授权系统进行授权，并将请求转发给在容器内部监听端口`8980`上的`secure_grpc`的 DAL 进程。最后，`wiring`部分定义希望对`thrift`的调用映射到`cql`容器上。该配置可以可视化为如下架构图：
+
+![](https://image.deepnomind.com/blog/image/92701024c9accecf85f1ce0ecc42ba65)
+
+##### 部署配置（期望）
+
+虽然运行时配置仅针对单个实例有效，但我们还需要配置这些实例的预期部署方式。部署需求通过声明式方式描述了数据网关部署的各项属性。以下是部署配置示例：
+
+```yaml
+deploy_desires:
+  # What are the access pattern and capacity
+  capacity:
+    model_name: org.netflix.key-value
+    query_pattern:
+      access_pattern: latency
+      estimated_read_per_second:  {low: 2000, mid: 20000, high: 200000}
+      estimated_write_per_second: {low: 2000, mid: 20000, high: 200000}
+    data_shape:
+      estimated_state_size_gib:   {low:   20, mid: 200,   high: 2000}
+      reserved_instance_app_mem_gib: 20
+  # How critical is this deployment to Netflix
+  service_tier: 0
+  # What version set of software should be deployed
+  version_set:
+      artifacts:
+        dals/dgw-kv:  {kind: branch, value: main}
+        # Runtime configuration is a container as well!
+        configs/main: {kind: branch, sha: ${DGW_CONFIG_VERSION}}
+  # Where should we deploy to, including multiple clusters
+  locations:
+    - account: prod
+      regions: [us-east-2, us-east-1, eu-west-1, us-west-2]
+    - account: prod
+      regions: [us-east-1]
+      stack: leader
+  # Who owns (is responsible for) this deployment
+  owners:
+    - {type: google-group, value: our-cool-team@netflix.com}
+    - {type: pager, value: our-cool-pagerduty-service}
+  # Who consumes (uses) this deployment, and what role?
+  consumers:
+    - {type: account-app, value: prod-api, group: read-write}
+    - {type: account-app, value: studio_prod-ui, group: read-only}
+```
+
+该配置在较高层次上明确了各种需求：所需[容量](https://github.com/Netflix-Skunkworks/service-capacity-modeling "Service Capacity Modeling")、工作负载环境、服务重要性、软件构成（包括镜像版本和运行时配置）、部署位置（包括区域和账户）以及访问控制。服务层级是一个简洁的背景信息，以 0 到 3+ 之间的数值形式呈现，该数值表示重要性，并影响集群管理、容量规划和警报系统。
+
+我们通过部署配置为每个分片配置硬件和软件，例如，我们将高级别层面的每秒请求数（RPS）和数据大小等所需容量信息作为输入，传递给自动化[容量规划器](https://www.youtube.com/watch?v=Lf6B1PxIvAs "容量规划器")，该规划器会将需求转化为价格最优的 EC2 实例选择以及所需的 ASG 扩展策略。我们还利用部署配置来指导集群的持续部署，同时实现更安全的分阶段部署（即先部署较不关键的层级）、构件锁定以及其他关键功能。
+
+我们将一组集群称为“分片”，为有状态服务提供了[故障隔离](https://www.infoq.com/presentations/netflix-stateful-cache "故障隔离")边界。在 Netflix 中，对于在线数据服务，分片部署或单租户架构是首选方案，能最大程度减少不良应用的波及范围，并保护整个 Netflix 产品免受不良邻近服务的影响。在 2024 年，数据网关平台通过声明式方式管理着数千个分片，这些分片服务于数十种不同的数据抽象。
+
+##### Data Gateway Agent 编排定制化组件
+
+每个数据网关的核心部分都包含一个代理，将其安装在 Netflix 的 EC2 服务器虚拟机上。该代理基于简洁的配置启动运行，负责管理所需容器，并连接代理以最终向用户展示数据抽象的组合。
+
+如果你熟悉 docker-compose，那么数据网关在理念上与之类似，只是集成了一流的[网格](https://www.envoyproxy.io "Envoy")以及持续运行的代理程序，该代理程序会不断促使实例朝着目标配置和状态发展（参见 [Towards Practical Self-Healing Distributed
+Databases](https://jolynch.github.io/pdf/practical-self-healing-databases.pdf)）。我们整合了多个组件来构建这个网关：
+
+- **可靠的系统组件**：EC2 虚拟机、containerd、数据网关代理、高效压缩的软件镜像
+- **进程间通信**：可插拔式服务注册中心、mTLS、认证、授权、连接管理以及内外部实例网络连接。
+- **监控**：全面系统健康检查，自动修复失效或故障的容器
+- **配置和软件**：软件和配置的版本集，基于环境的配置
+
+你可能会问：“为什么没有 Kubernetes 呢？”的确，Kubernetes [pods](https://kubernetes.io/docs/concepts/workloads/pods "pods") 与 [Istio](https://istio.io "Istio") 的结合可以组成更通用的计算平台，但对于我们相对简单的问题来说，这种方案也更为复杂。在 Netflix，计算平台团队有成熟的单租户 EC2 实例部署方案，并且在这种模式下，性能隔离和工具链都非常出色。如果我们不用这条成熟路径，团队就既要负责运维 Kubernetes，又要负责运维 Istio。我们并不希望采用并维护这样一个复杂的多租户调度器和容器解决方案来解决相对简单的将组件部署到同一主机上的问题。
+
+简单来说，Kubernetes 并未解决我们的实际问题，比如它无法让我们独立于 Pod 来启动和停止容器，而且它还更为复杂，会将一系列依赖项引入基础设施，而这些依赖对核心数据层并没有好处。数据网关平台的设计仅有三个外部依赖：一台 Linux 虚拟机（EC2）、一个强大的调度器（ASG）以及一个块存储系统（S3）。更少的外在复杂度对于将为整个 Netflix 部署基础数据访问层的骨干基础设施组件来说极具吸引力，因为所有这些都将由一个小团队来维护。
+
+#### 案例研究：键值服务
+
+在 Netflix，我们在数据网关平台上将键值服务（KV）部署为数据访问层（DAL）。键值服务基于数据网关构建，采用了一个名为`HashMap[String， SortedMap[Bytes， Bytes]]`的多层映射数据模型和查询 API，并具备每个命名空间的一致性和持久化控制功能，从而将数据存储的复杂细节进行了[抽象](https://www.youtube.com/watch?v=sQ-_jFgOBng&t=880s "String， SortedMap[Bytes， Bytes]]`的多层映射数据模型和查询 API，并具备每个命名空间的一致性和持久化控制功能，从而将数据存储的复杂细节进行了[抽象")处理。Netflix 的数百个团队都使用键值服务来为关键任务、全天候、全球性应用提供在线数据持久化支持。
+
+![键值业务数据网关](https://image.deepnomind.com/blog/image/00f61fabc05662eee40730f3e1f65aea)
+
+键值 DAL 运行 Java Spring Boot 应用程序，为键值 API 公开 gRPC 和 HTTP 接口。该应用包含了各种存储引擎，并在其上实现了一些特性，比如对冲请求、外置缓存、透明大数据分块、自适应分页、基于资源限制的断路器等等。 
+
+键值 DAL 镜像基于 [JIB](https://github.com/GoogleContainerTools/jib "JIB") 构建。Netflix 的标准应用框架是 Spring Boot，但数据网关平台与任何符合 OCI（开放云基础设施）标准的镜像兼容，无论应用编程语言或虚拟机操作系统如何。在持续集成（CI）期间，DAL 镜像会安全上传到 S3 产物存储库，并通过校验和检测以防止被篡改。
+
+键值模式通过运行时配置来实现针对特定环境的配置。例如：
+
+```yaml
+proxy_config:
+  public_listeners:
+    secure_grpc: {authz: gandalf, mode: grpc, path: "8980", tls_creds: metatron}
+    secure_http: {authz: gandalf, mode: http, path: "8443", tls_creds: metatron}
+
+container_dals:
+  kv:
+    # Pluggable startup commands
+    container_cmd: /apps/dgw-kv/start.sh
+    container_listeners: {http: "8080", secure_grpc: "8980", secure_http: "8443"}
+    # Configure heap and other properties
+    env:
+      MEMORY: 8000m
+      spring.app.property: property_value
+    # Define "healthy" for startup checks
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /usr/bin/curl -f -s --connect-timeout 0.500 --max-time 2 http://envoy:8080/admin/health
+    image: "dgw-kv"
+
+# Configure Netflix discovery targets
+registrations:
+  - address: shard.dgwkvgrpc,shard.dgwkv
+    mode: nflx-discovery
+```
+
+该代理运行了一个名为`kv`的容器，该容器是由`container_dals.kv`对象配置的，其中包括镜像名称、环境变量、容器健康检查命令以及要暴露的容器端口。
+
+代理为`public_listeners`中的每个条目配置 Envoy 主机侦听器，绑定所有地址（ipv4 的`0.0.0.0`或 ipv6 的`：：`）。这些侦听器按名称转发到容器侦听器，例如`secure_grpc`指定从主机端口`：：8980`到 DAL 容器端口`8980`的路由。代理确保没有主机端口冲突。代理最终基于`registrations`配置确定要在服务发现中注册哪个数据网关分片。
+
+容器级别的运行时配置与应用的具体细节（如监听的端口或健康检查端点）无关。它与众多数据网关应用兼容，并通过将快速变化的配置与应用代码库分离，实现了更经济的部署。
+
+#### 案例研究：安全RDS
+
+安全 RDS 采用了简单的直通架构，利用数据网关平台来保护与 PostgreSQL 和 MySQL 的 L4 连接。该架构在 Envoy 进程处终止 mTLS 连接，然后将底层的 L4 流量代理到后端 AWS RDS 集群。这样就通过 Netflix 标准的 mTLS 认证和授权系统保障了客户端的访问安全，并依赖于后端的 AWS 服务端 TLS。
+
+客户端会安装前向代理的辅助进程，该进程会发现数据网关，并在客户端主机端口`localhost:5432`（PostgreSQL）上进行监听。当客户端使用标准关系数据库客户端（如 JDBC）连接到前向代理时，前向代理会使用客户端应用的 metatron TLS 证书与数据网关的端口`5432`建立 mTLS 连接。在数据网关服务器上，该连接会根据客户端的身份进行授权。如果被允许，客户端应用会基于 L4 mTLS 通道，通过出口代理、经过数据网关（该网关会去除 mTLS），最终到达 RDS（RDS 会使用标准服务器端 TLS 来终止连接）。
+
+![安全RDS数据网关](https://image.deepnomind.com/blog/image/27b7026eb26faa21ee4199b8439badf2)
+
+这种架构使我们能够利用 Netflix 的认证和授权路径，无缝保护任何数据库协议，我们已将其应用于 AWS RDS、Open Search、CockroachDB 和 Neptune 等。此外，我们计划基于这种技术来保护其他现成的数据库，而无需对这些数据库进行任何修改。只要数据库集群是单租户的，这种技术就能使用户名/密码认证变得多余，因为认证由 Netflix 的 Metatron mTLS 处理，授权由 Netflix 的 Gandalf 系统处理。我们还可以基于 Netflix 的密钥系统对凭证进行安全加密，并依据分片的数据访问控制策略，将现有的用户名/密码认证数据库安全的整合到这个平台中。
+
+安全 RDS 运行时配置没有指定容器 DAL，相反，它只配置反向代理，将其路由到`network_dals.rds.listeners.secure_postgres`下的 RDS 实例和一个网络 DAL 目标：
+
+```yaml
+proxy_config:
+  public_listeners:
+    secure_postgres: {mode: tcp, path: "5432", tls_creds: metatron, authz: gandalf} 
+
+# RDS Gateways run no DAL containers
+container_dals: {}        
+
+network_dals:
+  rds:
+    listeners:
+      secure_postgres: postgresql://rds-db.ih34rtn3tflix.us-east-1.rds.amazonaws.com:5432
+    mode: logical_dns
+```
+
+#### 案例研究：无缝数据迁移
+
+工程师们出于各种原因需要在不同数据存储之间迁移数据，我们之前已经[介绍](https://www.youtube.com/watch?v=3bjnm1SXLlo&t=122s "介绍")了这些原因。现代数据存储是根据特定使用模式和数据模型设计的，因此当使用模式发生变化时，数据存储技术也会随之改变。由于诸如安全漏洞、已弃用 API、过时的软件或需要提高性能/功能等因素，数据库迁移往往是必要的。无论是为了缓解相邻数据的干扰问题还是提供新功能，这些迁移在无法进行现场升级的情况下对维护系统完整性和效率都起着至关重要的作用。为了使开发人员能够轻松完成这些过程，数据网关平台提供了流量镜像层，用于在不同存储引擎之间复制数据并实现查询负载的性能测试。通过数据网关，我们可以[管理](https://www.youtube.com/watch?v=3bjnm1SXLlo&t=408s "管理")整个迁移生命周期：
+
+![](https://image.deepnomind.com/blog/image/075b54685c1efc115ef46a2ba468e1a7)
+
+数据网关支持流量重定向功能，其实现方式是在数据面实例中部署两个 DAL 容器，一个作为“主容器”，连接到现有数据存储，另一个作为“从容器”，连接到新的数据存储。我们配置反向代理，将真实流量路由至主容器，并将流量“重定向”至从容器（即进行复制）。在将数据从主容器回填至从容器后，再将从容器升级以接收主容器的流量，从而完成数据迁移。以下是一个使用`thrift`作为主 DAL、`cql`作为从 DAL 的运行配置示例：
+
+```yaml
+proxy_config:
+  public_listeners:
+    secure_grpc: { mode: grpc, path: 8980 }
+
+container_dals:
+  cql:
+    container_listeners:
+      secure_grpc: 8980
+  thrift:
+    container_listeners:
+      secure_grpc: 8980
+
+wiring:
+  thrift: { mode: shadow, target: cql }
+```
+
+我们利用平台提供的数据[迁移](https://youtu.be/3bjnm1SXLlo?t=2078 "迁移")功能，将数百个已废弃的 Apache Cassandra 2 数据库迁移到了新的主版本 3 中。此次更新无法在原地安全执行，因为 Cassandra 3 对 Thrift 存储引擎做出了非兼容的更改，因此必须迁移数百个应用和 Cassandra 集群。我们通过以下步骤完成了此次迁移：首先将应用从直接访问 Cassandra 转移到数据网关上的键值服务，并通过数据网关将现有 Thrift 数据进行代理传输；然后通过影子流量将用户数据从 Cassandra 2 迁移到 Cassandra 3，并进行回填。
+
+通过相同的基础设施组件来集中进行数据迁移，是一个重要的关键点，使我们（作为专家）能够实现流程自动化，从而节省了数以千计的工程时间，并降低了数据损坏的风险。
+
+#### 结论和未来的工作
+
+数据网关充分体现了 Netflix 在数据层对技术创新和卓越运营的执着追求，不仅解决了当前的运维难题，还为未来运维数据存储系统的改进奠定了基础，以满足 Netflix 不断增长的业务需求，包括不断扩大的订阅服务以及广告、游戏和直播流媒体等新业务领域。
+
+在后续文章中，将分享更多关于如何利用此平台来迅速开发、部署和维护高级数据抽象内容的详细信息，例如：
+- 针对任意 L4/L7 数据库的统一认证与授权
+- gRPC 键值服务，将不断演进的键值存储引擎（如 Cassandra、EVCache、Netflix 自建的其他定制存储）从数千个不同应用场景的开发人员那里抽象出来。
+- gRPC 时间序列服务，将多个存储引擎组合起来，以实现大规模的数据摄入、保留策略以及搜索和检索功能。
+- gRPC 实体服务，提供灵活的 CRUD + QE（查询和事件处理）接口，融合了 CockroachDB、键值存储、Kafka 和 Elasticsearch 的优势。
