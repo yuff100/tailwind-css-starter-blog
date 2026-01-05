@@ -1,0 +1,226 @@
+---
+title: '扩容之旅：从 0 到 100 万用户'
+date: '2025-08-04'
+tags: ['架构','最佳实践']
+draft: false
+summary: '本文介绍了从支持少量用户的单体架构，通过不断迭代优化，直到实现能够支持 100 万用户的架构。'
+authors: ['default']
+---
+
+>*本文介绍了从支持少量用户的单体架构，通过不断迭代优化，直到实现能够支持 100 万用户的架构。原文：[Scaling to 1 Million Users: The Architecture I Wish I Knew Sooner](https://medium.com/@kanishks772/scaling-to-1-million-users-the-architecture-i-wish-i-knew-sooner-39c688ded2f1 "Scaling to 1 Million Users: The Architecture I Wish I Knew Sooner")*
+
+![](https://image.deepnomind.com/blog/image/13639938207f3259dfe2de8c08ad8000)
+
+我们刚开始运营时，仅仅 100 名日活用户就已经让我们感到欣喜了。但没过多久，用户数量就达到了 10,000 人，接着又攀升到了 100，000 人。并且随之而来的规模扩张问题比用户数量的增长速度还要快。
+
+我们的目标是 100 万用户，但适用于 1000 名用户的架构却无法满足 100 万用户的需求。回顾过去，本文将介绍我从一开始就希望构建的架构 —— 以及我们在压力下扩容所学到的经验。
+
+# 第一阶段：有效的单体（但后来也不再有效了）
+
+第一个架构很简单：
+
+- Spring Boot 应用
+- MySQL 数据库
+- NGINX 负载均衡器
+- 所有东西都部署在一台虚拟机上
+
+```
+[ Client ] → [ NGINX ] → [ Spring Boot App ] → [ MySQL ]
+```
+
+该架构能轻松应对 500 名并发用户。但在 5000 名并发用户的情况下：
+
+- CPU 使用率达到上限
+- 查询速度变慢
+- 正常运行时间低于 99%
+
+监控显示存在数据库锁、垃圾回收暂停以及线程争用的情况。
+
+# 第二阶段：增加更多服务器（但仍未触及真正瓶颈）
+
+我们为 NGINX 后端添加了更多应用服务器：
+
+```
+[ Client ] → [ NGINX ] → [ App1 | App2 | App3 ] → [ MySQL ]
+```
+
+扩容后的**读**操作效果很好，但**写**操作仍然集中在**单一 MySQL 实例**中。
+
+负载测试下：
+
+|用户数|平均响应时间|
+|-|-|
+|1000|120ms|
+|5000|480ms|
+|10000|3.2s|
+
+瓶颈不在 CPU，而在**数据库**。
+
+# 第三阶段：引入缓存
+
+我们引入 **Redis** 作为读查询的缓存层：
+
+```java
+public User getUser(String id) {
+    User cached = redisTemplate.opsForValue().get(id);
+    if (cached != null) return cached;
+    User user = userRepository.findById(id).orElseThrow();
+    redisTemplate.opsForValue().set(id, user, 10, TimeUnit.MINUTES);
+    return user;
+}
+```
+
+从而减少了 60% 数据库负载，并将缓存读取响应时间缩短到 200ms 以下。
+
+1000 个并发用户请求基准测试：
+
+| 方案 | 平均延时 | 数据库查询 |
+| - | - | - |
+| 无缓存 | 150ms | 1000 |
+| 有缓存 | 20ms | 50 |
+
+# 第四阶段：打破单体
+
+我们将核心功能分解为**微服务**：
+
+- 用户服务
+- 发布服务
+- 推送服务
+
+每项服务都有独立数据库（最初使用同一个数据库实例）。
+
+服务之间通过 **REST API** 进行通信：
+
+```java
+@RestController
+public class FeedController {
+    @GetMapping("/feed/{userId}")
+    public Feed getFeed(@PathVariable String userId) {
+        User user = userService.getUser(userId);
+        List<Post> posts = postService.getPostsForUser(userId);
+        return new Feed(user, posts);
+    }
+}
+```
+
+但连续调用 REST 会导致**延迟增加**，一次请求会衍生出 3 到 4 次内部请求。
+
+一旦规模变大，就会严重影响性能。
+
+# 第五阶段：消息传递与异步处理
+
+我们引入 **Kafka** 用于异步工作流程：
+
+- 用户注册会触发 Kafka 事件
+- 下游服务会消费事件，而非采用同步 REST 方式
+
+```java
+// Publish
+kafkaTemplate.send("user-signed-up", newUserId);
+
+// Consume
+@KafkaListener(topics = "user-signed-up")
+public void handleSignup(String userId) {
+    recommendationService.prepareWelcomeRecommendations(userId);
+}
+```
+
+引入 Kafka 后，注册延迟时间从 1.2 秒缩短至 300 毫秒，因为昂贵的下游任务不再占用带宽。
+
+# 第六阶段：扩展数据库
+
+在用户数量达到 50 万时，MySQL 实例就无法再满足需求了 —— 即便使用了缓存也是如此。
+
+我们引入了：
+
+- **读副本** → 读写操作分离
+- **分区** → 基于用户分区（用户 0 - 999k、1M - 2M 等）
+- **表归档** → 将冷数据移出热点路径
+
+示例查询路由：
+
+```java
+if (userId < 1000000) {
+    return jdbcTemplate1.query(...);
+} else {
+    return jdbcTemplate2.query(...);
+}
+```
+
+这减少了跨分区的写争用和查询次数。
+
+# 第七阶段：可观测性
+
+在用户数量达到 10 万以上后，如果没有可观测性功能，调试工作简直就是一场噩梦。
+
+我们引入：
+
+- 分布式追踪（Jaeger + OpenTelemetry）
+- 集中式日志（ELK 框架）
+- Prometheus + Grafana 报表面板
+
+Grafana 指标示例：
+
+| 指标 | 值 |
+| - | - |
+| P95 延时 | 280ms |
+| 数据库链接 | 120/200 |
+| Kafka 延迟 | 0       |
+
+在可观察性出现之前，诊断延迟峰值需要几个小时，现在只需要几分钟。
+
+# 第八阶段：CDN 与边缘缓存
+
+在用户数量达到 100 万时，40% 流量都来自于静态文件（图片、头像、JS 包）。
+
+我们将其移入 Cloudflare CDN 并启用了强力缓存功能：
+
+| 资源 | 源延迟 | CDN 延迟 |
+| - | - | - |
+| /static/app.js | 400ms | 40ms |
+| /images/avatar.png | 300ms | 35ms |
+
+这样可以从源服务器上卸载 70% 的流量。
+
+# 最终架构
+
+如果可以重新开始，我将跳过其他阶段并更早构建：
+
+```
+[ Client ]  
+   ↓  
+[ CDN + Edge Caching ]  
+   ↓  
+[ API Gateway → Service Mesh ]  
+   ↓  
+[ Microservices + Kafka + Redis Cache ]  
+   ↓  
+[ Sharded Database + Read Replicas ]
+```
+
+关键经验：
+
+- 缓存并非可选配置
+- 数据库扩展需要尽早进行设计
+- 异步处理至关重要
+- 可观测性能带来早期收益
+
+扩容并非只是“增加服务器数量”那么简单 —— 而在于消除各个层面的瓶颈问题。
+
+# 最终基准测试（100 万用户，每秒 1000 次请求）：
+
+| 指标 | Value |
+| - | - |
+| P95 API 延时 | 210ms |
+| 出错率 | <0.1% |
+| 缓存命中率 | 85% |
+| 数据库查询速率 | 50 qps |
+| Kafka 消费延迟 | 0 |
+
+# 结束语
+
+实现用户数量达到百万级的目标，并非依靠高深复杂的技术，而是在于以正确顺序解决恰当的问题。
+
+当初服务于首批 1000 名用户的架构，已无法满足接下来 100 万用户的需要了。
+
+需要在遭遇失败模式之前就做好应对计划。
