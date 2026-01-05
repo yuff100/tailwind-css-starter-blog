@@ -1,0 +1,176 @@
+---
+title: 'Chain-of-Draft：新一代提示技术之王'
+date: '2025-08-05'
+tags: ['人工智能','提示工程']
+draft: false
+summary: '本文深入研究了最新提出的草案链（CoD）提示，该技术以前所未有的方式降低了 LLM 推理的成本和延迟。'
+authors: ['default']
+---
+
+>*本文深入研究了最新提出的草案链（CoD）提示，该技术以前所未有的方式降低了 LLM 推理的成本和延迟。原文：[Chain-of-Draft (CoD) Is The New King Of Prompting Techniques](https://medium.com/@bamania-ashish/chain-of-draft-cod-is-the-new-king-of-prompting-techniques-d9dc17f12051 "Chain-of-Draft (CoD "Chain-of-Draft (CoD) Is The New King Of Prompting Techniques") Is The New King Of Prompting Techniques")*
+
+![](https://image.deepnomind.com/blog/image/cc3a6f14067246f2223c4901bd3b163a)
+
+推理 LLM 是当今 AI 研究的热门话题。
+
+我们从 [GPT-1](https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf "GPT-1") 开始，直到出现了 [Grok-3](https://x.ai/blog/grok-3 "Grok-3") 这样的高级推理器。
+
+这次旅程意义非凡，一路上还发现了许多非常重要的推理方法。
+
+其中一种是思维链提示（[少样本提示](https://arxiv.org/abs/2201.11903 "少样本提示") 和 [零样本提示](https://arxiv.org/abs/2205.11916 "零样本提示")），促成了我们如今所看到的 [大型语言模型推理](https://arxiv.org/abs/2501.12948 "大型语言模型推理") 方面的诸多变革。
+
+令人兴奋的是，来自 Zoom 通信公司的研究人员现在又公布了一种更为出色的技术。
+
+这种被称为 [草案链提示（CoD，Chain-of-Draft）](https://arxiv.org/abs/2502.18600 "草案链提示（CoD，Chain-of-Draft）")的技术在准确性方面优于 CoT 提示，在回答问题时仅使用了全部推理标记中的 7.6%。
+
+![基于直接回答（标准）、思维链（CoT）和草案链（CoD）提示的 Claude 3.5 Sonnet 解决不同推理域任务的准确性和 token 使用比较](https://image.deepnomind.com/blog/image/d29584172490dda2ab7aedfe83d55e77)
+
+对于推理 LLM 来说，这是一个巨大胜利。LLM 目前非常冗长，需要大量计算时间，并且延迟很高，这实际上成为了许多时间关键型应用的瓶颈。
+
+我们深入研究了草案链（CoD），下面将介绍该技术是如何工作的，以及如何利用它使得 LLM 比以往任何时候都更加准确和高效。
+
+# 首先，我们来谈谈提示
+
+研究人员不断在 LLM 中发现新的行为模式。
+
+通过 [Transformer](https://arxiv.org/abs/1706.03762 "Transformer") 技术，我们进而发展出了 [生成式预训练 Transformer（GPT）](https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf "生成式预训练 Transformer（GPT）")。很快，我们发现将其扩展到 [GPT-2](https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf "GPT-2")（拥有 15 亿个参数）后，便能成为 **无监督多任务学习器**（无需通过监督学习或针对特定任务的数据集进行微调即可执行多项任务）。
+
+随着模型规模进一步扩展至 [GPT-3](https://arxiv.org/abs/2005.14165 "GPT-3")（拥有 1750 亿个参数），研究发现，仅需在提示中提供少量示例（即 **少样本提示**），该模型就能迅速适应并出色完成新的任务。
+
+随后发现，将解决问题的过程分解为中间推理步骤，并促使 LLM 生成这些步骤，能够在算术、常识和符号推理任务中的表现达到最先进水平。
+
+这种方法被称为 [思维链（CoT）提示法](https://arxiv.org/abs/2201.11903 "思维链（CoT）提示法")。
+
+![标准提示和思维链提示示例](https://image.deepnomind.com/blog/image/c4b219e8acc3067c7b16130e774b8b11)
+
+根据相关研究，人们很快发现 [LLM 可实现零样本推理](https://arxiv.org/abs/2205.11916 "LLM 可实现零样本推理")。
+
+与最初的 CoT 提示一样，无需借助少样本推理来进行提示，就能获得更好的表现效果。
+
+只需在提示中加入“*让我们一步一步思考*”这样的表述，就能促使 LLM 边解决问题边逐步进行推理。
+
+这种方法被称为 **零样本思维链提示**。
+
+![标准零样本和少样本提示、原始 CoT 提示（如图“(b) Few-shot-CoT”）和零样本 CoT 提示的比较](https://image.deepnomind.com/blog/image/8fa732044a85c99126fa3cad23b6ec48)
+
+研究人员随后意识到，对答案进行链式推理和贪婪解码是不够的。
+
+复杂推理任务可能需要多条推理路径来得出正确答案，如果多条路径得出相同答案，就可以确信最终答案是正确的。
+
+从而出现了被称为[自一致性（Self-Consistency）](https://arxiv.org/abs/2203.11171 "自一致性（Self-Consistency）")的新解码策略，该策略对模型进行采样以生成多条推理路径，并从中选择最一致的答案。
+
+![CoT 提示中的贪婪解码与自一致性](https://image.deepnomind.com/blog/image/4af1af6e9f23f7c375716f8669526849)
+
+# 提示架构崭露头角
+
+基于在问题解决过程中考虑多种推理路径的思路，提出了 [思维树（ToT，Tree-of-Thoughts）](https://arxiv.org/pdf/2305.10601 "思维树（ToT，Tree-of-Thoughts）")框架，该框架通过类似树状的思维过程来探索解决方案空间。
+
+![思维树框架](https://image.deepnomind.com/blog/image/06a554dc27cbc6930176472f1b674885)
+
+它使用被称为“思维（Thoughts）”的语言序列作为解决问题的中间步骤。在需要时，通过前瞻性和回溯性搜索算法进行评估和探索。
+
+![各种推理方法比较](https://image.deepnomind.com/blog/image/20a68f78f94463fafd00831e754af9e8)
+
+树形架构被图（Graph）所取代，从而产生了更好的为解决方案空间建模的[思维图（Graph-of-Thoughts）](https://arxiv.org/pdf/2308.09687 "思维图（Graph-of-Thoughts）")框架。
+
+![思维图与其他推理方法的比较](https://image.deepnomind.com/blog/image/fb297c3047b85fc239c1aa43dfb52475)
+
+但这还不是全部！
+
+提示并不是帮助 LLM 更好推理的唯一方法，还有很多其他技巧，可以在论文 [Advancing Reasoning in Large Language Models: Promising Methods and Approaches](https://arxiv.org/pdf/2502.03671v1 "Advancing Reasoning in Large Language Models: Promising Methods and Approaches") 中找到简要概述。
+
+# 但是延迟呢？
+
+探索推理空间是一项计算成本高昂的任务，会增加响应时间。
+
+为降低延迟而设计的一种解决方案被称为 [思维骨架（SoT，Skeleton-of-Thought）](https://arxiv.org/abs/2307.15337 "思维骨架（SoT，Skeleton-of-Thought）")，它首先引导 LLM 生成答案的大致框架/大纲。
+
+然后进行并行 API 调用/批量解码操作，以并行完成每个骨骼点的全部内容。
+
+![与标准解码相比，思想骨架（SoT）概述](https://image.deepnomind.com/blog/image/10f739bd8421ee8f86d2f0d4d83be2ba)
+
+推理模型还可能对简单问题考虑过多，生成不必要的推理令牌，从而导致较高的响应时间。
+
+![在“2加3是多少”这个问题上生成的 token](https://image.deepnomind.com/blog/image/a6673442fddba3db9d594af98becfb7f)
+
+*看看 [QwQ-32-B-Preview](https://huggingface.co/Qwen/QwQ-32B-Preview "QwQ-32-B-Preview") 模型是怎么解决这个简单的 2+3 的问题，简直疯了！*
+
+![QwQ-32-B-Preview 对简单算术问题的过度思考](https://image.deepnomind.com/blog/image/83d18cd604e02fa67fe62a3411a92a1b)
+
+研究人员试图通过[限制推理令牌预算](https://arxiv.org/abs/2407.19825 "限制推理令牌预算")来解决这个问题，但 LLM 往往不能坚持这一点。
+
+在回答问题之前，还需要额外的 LLM 来根据不同问题的复杂性[动态估计令牌预算](https://arxiv.org/abs/2412.18547 "动态估计令牌预算")，这进一步增加了响应延迟。
+
+![令牌预算感知 LLM 推理（TALE，Token-Budget-Aware LLM Reasoning）概述](https://image.deepnomind.com/blog/image/47575dc8dfcc3d65737087a164f0ebf2)
+
+*是否可以将所有这些见解结合起来，并以某种方式简化以达到单一方法？*
+
+# 因此出现了“草案链”提示
+
+回到最基本的概念来看，思维链提示对提升 LLM 的推理能力确实非常有效。
+
+然而，这种方式冗长繁琐，LLM 的解答过程需要生成数千个推理 token 才能得出答案。
+
+这与人类的思考和推理方式大不相同。
+
+我们思考时通常不会用冗长复杂的语言进行推理，而是会把最重要的中间观点（草稿）记录下来。
+
+这就是 **草案链（CoD，Chain-of-Draft）** 提示所借鉴的灵感来源。
+
+**它只要求模型逐步思考，并将每一步推理内容限制在最多五个词以内。**
+
+为确保模型能够理解这一点，研究人员会手动编写此类草案链示例，并将其包含在提示中。
+
+令人惊讶的是，竟然没有任何措施来强制执行这样的限制规定，而模型只是将此作为通用指导原则来加以遵循。
+
+这与标准的少样本提示形成了鲜明对比，在这种方式中，查询-响应对会出现在提示中，而模型则需要直接给出最终答案，无需任何推理或解释。
+
+这也与思维链提示不同，在思维链提示中，中间推理步骤会以查询-响应对的形式出现在提示中，然后模型需要根据这些提示来回答问题。
+
+这两种方法之间的差异在下面的图片中体现得更为明显，图中展示了 LLM 被要求解决一个简单算术问题。
+
+![](https://image.deepnomind.com/blog/image/106ce19add0dc4408a62704c977410d3)
+
+# CoD 提示效果如何？
+
+为了评估 CoD 提示，我们对 [GPT-4o](https://openai.com/index/hello-gpt-4o/ "GPT-4o") 和 [Claude 3.5 Sonnet](https://www.anthropic.com/news/claude-3-5-sonnet "Claude 3.5 Sonnet") 以上述三种方式进行了提示。
+
+每种提示方式给这些模型提供的系统提示如图所示。
+
+![标准提示、CoT 提示和 CoD 提示](https://image.deepnomind.com/blog/image/5a1fdc4170f2b94875cfcdf3dbe874e1)
+
+在算术推理 [GSM8K 数据集](https://arxiv.org/abs/2110.14168 "GSM8K 数据集")上，CoD 达到了 91% 的准确率，而使用的令牌比 CoT 少 80%，并减少了延迟，而且没有任何明显的准确率损失（在 GPT-4o 的情况下，CoD 为 91.1%，CoT 为 95.4%）。
+
+![](https://image.deepnomind.com/blog/image/0f0fee936c9388ee19e3648c2b147abb)
+
+在 [大型工作任务](https://arxiv.org/abs/2206.04615 "大型工作任务") 上进行的日期和体育推理中，CoD 显着减少了延迟和令牌使用，同时具有与 CoT 相同/更高的准确性。
+
+![](https://image.deepnomind.com/blog/image/ab67fb2f12b2fcbc4379e5ce3eadb910)
+
+注意，当与 Claude 3.5 Sonnet 一起用于体育理解任务时，CoD 令人印象深刻的将 CoT 提示的平均输出标记从 189.4 减少到 14.3（减少了 92.4%）！
+
+![](https://image.deepnomind.com/blog/image/42714cd4247c982cb80be16b4a927ded)
+
+最后，在抛硬币符号推理任务（预测一系列抛硬币后的最终硬币状态）上进行评估时，CoD 的准确率为 100%，token 数量明显少于其他方法。
+
+![研究人员创建的抛硬币数据集中的一个问题示例](https://image.deepnomind.com/blog/image/298c4479d981037291bc7ef7768da778)
+
+![由研究人员创建的包含250个测试用例的定制数据集上的抛硬币评估结果](https://image.deepnomind.com/blog/image/a521c71e058fbb9bbcfe5fdf471ab807)
+
+结果简直太惊人了！
+
+CoD 技术能够实现极高的准确率，并且具有极低的延迟，从而大幅缩短响应时间，为对时间/计算效率要求极高的应用提供了极大优势。
+
+此类 CoD 数据还可用于训练语言模型以使其推理能力更强（基于 [DeepSeek-R1 强化学习训练方法](https://arxiv.org/abs/2501.12948 "DeepSeek-R1 强化学习训练方法")），从而使模型运行速度更快、成本更低、效率更高且更具扩展性。
+
+这一切都让人感到非常兴奋！
+
+# 延伸阅读
+
+[Chain of Draft: Thinking Faster by Writing Less](https://arxiv.org/abs/2502.18600 "Chain of Draft: Thinking Faster by Writing Less")
+
+[Chain-of-Thought Prompting Elicits Reasoning in Large Language Models](https://arxiv.org/abs/2201.11903 "Chain-of-Thought Prompting Elicits Reasoning in Large Language Models")
+
+[The Prompt Report: A Systematic Survey of Prompt Engineering Techniques](https://arxiv.org/abs/2406.06608 "The Prompt Report: A Systematic Survey of Prompt Engineering Techniques")
+
+[Advancing Reasoning in Large Language Models: Promising Methods and Approaches](https://arxiv.org/abs/2502.03671v1 "Advancing Reasoning in Large Language Models: Promising Methods and Approaches")
