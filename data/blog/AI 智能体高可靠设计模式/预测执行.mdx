@@ -1,0 +1,326 @@
+---
+title: 'AI 智能体高可靠设计模式：预测执行'
+date: '2026-01-05'
+tags: ['人工智能','AI 智能体高可靠设计模式']
+draft: false
+summary: '本系列介绍增强现代智能体系统可靠性的设计模式，以直观方式逐一介绍每个概念，拆解其目的，然后实现简单可行的版本，演示其如何融入现实世界的智能体系统。本系列一共 14 篇文章，这是第 4 篇。'
+---
+
+>*本系列介绍增强现代智能体系统可靠性的设计模式，以直观方式逐一介绍每个概念，拆解其目的，然后实现简单可行的版本，演示其如何融入现实世界的智能体系统。本系列一共 14 篇文章，这是第 4 篇。原文：[Building the 14 Key Pillars of Agentic AI](https://levelup.gitconnected.com/building-the-14-key-pillars-of-agentic-ai-229e50f65986)*
+
+![](https://image.deepnomind.com/blog/image/48df0afb07ffc72fa1851b381f32a6bd)
+
+优化智能体解决方案需要软件工程确保组件协调、并行运行并与系统高效交互。例如[预测执行](https://en.wikipedia.org/wiki/Speculative_execution)，会尝试处理可预测查询以**降低时延**，或者进行[冗余执行](https://developer.arm.com/community/arm-community-blogs/b/embedded-and-microcontrollers-blog/posts/comparing-lock-step-redundant-execution-versus-split-lock-technologies)，即**对同一智能体重复执行多次**以防单点故障。其他增强现代智能体系统可靠性的模式包括：
+
+- **并行工具**：智能体同时执行独立 API 调用以隐藏 I/O 时延。
+- **层级智能体**：管理者将任务拆分为由执行智能体处理的小步骤。
+- **竞争性智能体组合**：多个智能体提出答案，系统选出最佳。
+- **冗余执行**：即两个或多个智能体解决同一任务以检测错误并提高可靠性。
+- **并行检索和混合检索**：多种检索策略协同运行以提升上下文质量。
+- **多跳检索**：智能体通过迭代检索步骤收集更深入、更相关的信息。
+
+还有很多其他模式。
+
+本系列将实现最常用智能体模式背后的基础概念，以直观方式逐一介绍每个概念，拆解其目的，然后实现简单可行的版本，演示其如何融入现实世界的智能体系统。
+
+所有理论和代码都在 GitHub 仓库里：[🤖 Agentic Parallelism: A Practical Guide 🚀](https://github.com/FareedKhan-dev/agentic-parallelism)
+
+代码库组织如下：
+
+```
+agentic-parallelism/
+    ├── 01_parallel_tool_use.ipynb
+    ├── 02_parallel_hypothesis.ipynb
+    ...
+    ├── 06_competitive_agent_ensembles.ipynb
+    ├── 07_agent_assembly_line.ipynb
+    ├── 08_decentralized_blackboard.ipynb
+    ...
+    ├── 13_parallel_context_preprocessing.ipynb
+    └── 14_parallel_multi_hop_retrieval.ipynb
+```
+
+---
+
+# 对超响应智能体的预测执行
+
+许多智能体工作流为：`用户输入 -> 代理思考 (调用 LLM) -> 代理执行 (调用工具)`。用户在两个阶段都要等待，而预测执行让这两阶段并行执行。
+
+当代理思考时，系统会对即将发生的动作做出有根据的预测并启动。
+
+![预测执行](https://image.deepnomind.com/blog/image/7ed11710872fddcc877a288655dc8ca8)
+
+如果预测正确，工具调用时延实际上被 LLM 推理时间隐藏，代理感觉一下子就完成了。
+
+这是任何高吞吐量、面向用户系统的关键架构模式，快速响应是其主要特点。我们将构建客户支持代理，获取用户订单历史，展示这种模式如何从用户角度消除工具调用时延。
+
+要展示模式流，首先需要一个现实中执行缓慢的工具。我们将创建模拟数据库查询，具有固定的人工时延。
+
+```python
+from langchain_core.tools import tool
+import time
+import json
+
+# 定义模拟数据库时延常数
+DATABASE_LATENCY_SECONDS = 3
+@tool
+def get_order_history(user_id: str) -> str:
+    """A simulated slow tool that fetches the order history for a given user from a database."""
+    print(f"--- [DATABASE] Starting query for user_id: {user_id}. This will take {DATABASE_LATENCY_SECONDS} seconds. ---")
+    
+    # 'time.sleep()' 模拟网络和数据库查询时间
+    time.sleep(DATABASE_LATENCY_SECONDS)
+    
+    # 在这个演示中使用模拟数据
+    mock_db = {
+        "user123": [
+            {"order_id": "A123", "item": "QuantumLeap AI Processor", "status": "Shipped"},
+            {"order_id": "B456", "item": "Smart Coffee Mug", "status": "Delivered"}
+        ]
+    }
+    result = mock_db.get(user_id, [])
+    print(f"--- [DATABASE] Query finished for user_id: {user_id}. ---")
+    return json.dumps(result)
+```
+
+`get_order_history` 工具是实验的核心，`time.sleep(DATABASE_LATENCY_SECONDS)` 给了一个可预测的 3 秒时延，我们尝试用预测执行模式来隐藏该时延。
+
+接下来定义 `GraphState`，包含特殊字段 `prefetched_data`，用于存储预测调用的结果。
+
+```python
+from typing import TypedDict, Annotated, List, Optional
+from langchain_core.messages import BaseMessage
+import operator
+from concurrent.futures import Future
+
+class GraphState(TypedDict):
+    messages: Annotated[List[BaseMessage], operator.add]
+    user_id: str
+    # 'prefetched_data' 持有 Python Future 对象，代表后台工具调用
+    prefetched_data: Optional[Future]
+    # 'agent_decision' 将保留 LLM 决定进行的实际工具调用
+    agent_decision: Optional[BaseMessage]
+    performance_log: Annotated[List[str], operator.add]
+```
+
+这个 `GraphState` 的关键部分是 `prefetched_data: Optional[Future]` 字段，`Future` 是标准 Python 对象，作为尚未可用的结果的占位符，使得入口节点在启动后台任务后立即返回，同时通过状态传递 `Future` 对象。
+
+现在说说模式的核心：`entry_point` 节点，该节点并行启动两个过程：预测工具调用和主要 LLM 推理。
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+
+# 创建线程池来运行后台任务
+thread_pool = ThreadPoolExecutor(max_workers=5)
+def entry_point(state: GraphState):
+    """The entry point node: starts the speculative pre-fetch and the main agent reasoning in parallel."""
+    print("--- [ORCHESTRATOR] Entry point started. --- ")
+    start_time = time.time()
+    
+    # 1. 使用线程池在后台线程中启动预测预取
+    #    .submit() 方法立即返回 'Future' 对象
+    print("--- [ORCHESTRATOR] Starting speculative pre-fetch of order history... ---")
+    prefetched_data_future = thread_pool.submit(get_order_history.invoke, {"user_id": state['user_id']})
+    
+    # 2. 同时，当工具在后台运行时，启动主代理的 LLM 调用
+    print("--- [ORCHESTRATOR] Starting main agent LLM call... ---")
+    agent_response = llm_with_tools.invoke(state['messages'])
+    
+    execution_time = time.time() - start_time
+    log_entry = f"[Orchestrator] LLM reasoning completed in {execution_time:.2f}s."
+    print(log_entry)
+    
+    # 节点返回添加到状态里的 Future 对象和代理决定
+    return {
+        "prefetched_data": prefetched_data_future,
+        "agent_decision": agent_response,
+        "performance_log": [log_entry]
+    }
+```
+
+在 `entry_point` 节点中，`thread_pool.submit()` 调用是非阻塞的，在独立线程中启动 3 秒的 `get_order_history` 工具，并立即返回 `Future` 对象。代码随后无需等待即可继续，立即调用 `llm_with_tools`。这就是预测执行模式的并行基础。
+
+接下来定义 `tool_executor_node`，该节点有用于检查所需数据是否已被预先获取的特殊逻辑。
+
+```python
+from langchain_core.messages import ToolMessage
+
+def tool_executor_node(state: GraphState):
+    """Executes the agent's chosen tool, but first checks if the data has already been pre-fetched."""
+    print("--- [TOOL EXECUTOR] Node started. --- ")
+    start_time = time.time()
+    
+    agent_decision = state['agent_decision']
+    tool_call = agent_decision.tool_calls[0]
+    
+    # 检查代理想要调用的工具是否是预测执行的工具
+    if tool_call['name'] == "get_order_history":
+        print("--- [TOOL EXECUTOR] Agent wants order history. Checking pre-fetch... ---")
+        # 如果是，就调用 Future 对象上的 .result()。调用将被阻塞，直到后台线程完成
+        # 但如果已经完成，会立即返回结果
+        prefetched_future = state['prefetched_data']
+        tool_result = prefetched_future.result()
+        print("--- [TOOL EXECUTOR] Pre-fetch successful! Using cached data instantly. ---")
+    else:
+        # 如果代理做出不同决定，则正常执行该工具
+        print(f"--- [TOOL EXECUTOR] Speculation failed. Agent wants {tool_call['name']}. Executing normally. ---")
+        # (演示未采用此路径)
+        tool_result = "Tool not implemented for this demo."
+    
+    tool_message = ToolMessage(content=tool_result, tool_call_id=tool_call['id'])
+    
+    execution_time = time.time() - start_time
+    log_entry = f"[ToolExecutor] Resolved tool call in {execution_time:.2f}s."
+    print(log_entry)
+    
+    return {"messages": [agent_decision, tool_message], "performance_log": [log_entry]}
+```
+
+你可能已经注意到，`tool_executor_node` 的重要性在于 `prefetched_future.result()` 调用。
+
+1. 如果 3 秒的数据库查找在 LLM 思考时已经完成，会立即返回。从这一步角度来看，3 秒的时延已经被有效消除。
+2. 如果预测错误，代理选择了不同的工具，就会忽略 `Future`，从零开始执行正确的工具调用。
+
+现在组装图……
+
+```python
+from langgraph.graph import StateGraph, END
+
+# 条件边检查代理决定是否包括任何工具调用
+def should_call_tool(state: GraphState) -> str:
+    if state['agent_decision'].tool_calls:
+        return "execute_tool"
+    return END
+
+# 定义图
+workflow = StateGraph(GraphState)
+workflow.add_node("entry_point", entry_point)
+workflow.add_node("execute_tool", tool_executor_node)
+workflow.add_node("final_answer", final_answer_node) # (Assuming final_answer_node is defined)
+
+# 构建图的控制流
+workflow.set_entry_point("entry_point")
+workflow.add_conditional_edges("entry_point", should_call_tool)
+workflow.add_edge("execute_tool", "final_answer")
+workflow.add_edge("final_answer", END)
+app = workflow.compile()
+```
+
+![预测执行](https://image.deepnomind.com/blog/image/7d07c3676133983a6893f6f88b3a1dcf)
+
+下面进行测试，将预测工作流实际执行时间与模拟的传统顺序流进行比较。
+
+```python
+from langchain_core.messages import HumanMessage
+import json
+
+inputs = {
+    "messages": [HumanMessage(content="Hi, can you tell me the status of my recent orders?")],
+    "user_id": "user123"
+}
+
+step_counter = 1
+final_state = None
+
+for output in app.stream(inputs, stream_mode="values"):
+    node_name = list(output.keys())[0]
+    print(f"\n{'*' * 100}")
+    print(f"**Step {step_counter}: {node_name.replace('_', ' ').title()} Node Execution**")
+    print(f"{'*' * 100}")
+    
+    step_counter += 1
+
+
+#### 输出 ####
+[ORCHESTRATOR] Entry point started. --- 
+[ORCHESTRATOR] Starting speculative pre-fetch of order history... ---
+[DATABASE] Starting query for user_id: user123. This will take 3 seconds. ---
+...
+```
+
+这将基于用户查询启动工作流，但对我们来说，关键是获取这种方法的性能，所以就这么做吧……
+
+```python
+# 在完整运行后从 final_state 性能日志中提取定时数据
+# (完整运行已完成，final_state已填充)
+llm_time_1 = float(final_state['performance_log'][0].split(' ')[-2])
+resolution_time = float(final_state['performance_log'][1].split(' ')[-2])
+llm_time_2 = float(final_state['performance_log'][2].split(' ')[-2])
+db_time = DATABASE_LATENCY_SECONDS # Our known latency
+
+# 计算预测运行总时间
+speculative_total = llm_time_1 + resolution_time + llm_time_2
+# 计算模拟顺序运行总时间
+sequential_total = llm_time_1 + db_time + llm_time_2
+time_saved = sequential_total - speculative_total
+reduction_percent = (time_saved / sequential_total) * 100
+
+print("="*60)
+print("                  PERFORMANCE SHOWDOWN")
+print("="*60)
+
+print("\n" + "-"*60)
+print("             SPECULATIVE EXECUTION WORKFLOW (Our Run)")
+print("-"*60)
+print(f"1. Agent Thinks (LLM Call 1):       {llm_time_1:.2f} seconds")
+print(f"   (Database Query: {db_time:.2f}s ran in parallel, fully hidden)")
+print(f"2. Tool Result Resolution:          {resolution_time:.2f} seconds (Instant cache hit)")
+print(f"3. Synthesize Answer (LLM Call 2):  {llm_time_2:.2f} seconds")
+
+print("-"*60)
+print(f"Total Time to Final Answer: {speculative_total:.2f} seconds\n\n")
+print("-"*60)
+
+print("             TRADITIONAL SEQUENTIAL WORKFLOW (Simulated)")
+print("-"*60)
+print(f"1. Agent Thinks (LLM Call 1):       {llm_time_1:.2f} seconds")
+print(f"2. Execute Tool (Database Query):   {db_time:.2f} seconds (User waits)")
+print(f"3. Synthesize Answer (LLM Call 2):  {llm_time_2:.2f} seconds")
+
+print("-"*60)
+print(f"Simulated Total Time: {sequential_total:.2f} seconds\n\n")
+print("="*60)
+print("                        CONCLUSION")
+
+print("="*60)
+print(f"Time Saved: {time_saved:.2f} seconds")
+print(f"Perceived Latency Reduction: {reduction_percent:.0f}%\n")
+```
+
+看下输出……
+
+```python
+#### 输出 ####
+============================================================
+                  PERFORMANCE SHOWDOWN
+============================================================
+
+------------------------------------------------------------
+             SPECULATIVE EXECUTION WORKFLOW (Our Run)
+------------------------------------------------------------
+1. Agent Thinks (LLM Call 1):       4.21 seconds
+   (Database Query: 3.00s ran in parallel, fully hidden)
+2. Tool Result Resolution:          0.01 seconds (Instant cache hit)
+3. Synthesize Answer (LLM Call 2):  3.55 seconds
+------------------------------------------------------------
+Total Time to Final Answer: 7.77 seconds
+
+------------------------------------------------------------
+             TRADITIONAL SEQUENTIAL WORKFLOW (Simulated)
+------------------------------------------------------------
+1. Agent Thinks (LLM Call 1):       4.21 seconds
+2. Execute Tool (Database Query):   3.00 seconds (User waits)
+3. Synthesize Answer (LLM Call 2):  3.55 seconds
+------------------------------------------------------------
+Simulated Total Time: 10.76 seconds
+
+============================================================
+                        CONCLUSION
+============================================================
+Time Saved: 2.99 seconds
+Perceived Latency Reduction: 28%
+```
+
+几乎节约了……准确等待慢速工具调用的持续时间，从而使总响应时间减少 28%。
+
+在**预测执行工作流**中，3 秒的数据库查询与初始 4.21s 的 LLM 调用同时进行。由于 LLM 调用是两项并行工作中耗时较长的，数据库时延被完全隐藏。`tool_executor_node` 几乎瞬间用了 0.01s 就完成了，用户感知的总时延仅为 7.77s。
