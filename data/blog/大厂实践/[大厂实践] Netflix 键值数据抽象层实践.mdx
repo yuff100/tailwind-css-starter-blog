@@ -1,0 +1,273 @@
+---
+title: '[大厂实践] Netflix 键值数据抽象层实践'
+date: '2025-07-21'
+tags: ['大厂实践','架构']
+draft: false
+summary: '本文介绍了 Netflix 的 KV 存储抽象层，能够适应各种数据模式和应用场景，将底层数据库的复杂性从开发人员那里抽象出来，使应用工程师能够专注于解决业务问题。'
+authors: ['default']
+---
+
+>*本文介绍了 Netflix 的 KV 存储抽象层，能够适应各种数据模式和应用场景，将底层数据库的复杂性从开发人员那里抽象出来，使应用工程师能够专注于解决业务问题。原文：[Introducing Netflix’s Key-Value Data Abstraction Layer](https://netflixtechblog.com/introducing-netflixs-key-value-data-abstraction-layer-1ea8a0a11b30 "Introducing Netflix’s Key-Value Data Abstraction Layer")*
+
+![](https://image.deepnomind.com/blog/image/32d9f25708843db0c75b6161a5d6f312)
+
+#### 简介
+
+Netflix 能够为数百万用户提供无缝、高质量的流媒体服务，完全依赖于强大的全球后端基础设施，其核心是多种在线分布式数据库，例如 [Apache Cassandra](https://cassandra.apache.org "Apache Cassandra")（一种以高可用性和可扩展性著称的 NoSQL 数据库）就为 Netflix 内部众多应用场景提供了支持，涵盖用户注册、存储观看历史记录，以及支持实时分析和实时流媒体播放等。
+
+随着时间推移、新的键值数据库的推出以及新用例的出现，我们在数据存储的误用方面遇到了诸多挑战。首先，开发人员难以理解这种复杂全球部署中多个存储的一致性、持久性和性能。其次，开发人员必须不断重新学习新的数据建模实践和常见但关键的数据访问模式。这些挑战包括尾延迟和幂等性的问题、管理包含大量行的“宽”分区、处理单个大型“胖”列以及慢速响应分页。此外，与多个原生数据库 API 的紧密耦合（这些 API 不断演变，有时还会引入不兼容的更改）导致需要整个组织提供大范围的工程努力来维护和优化微服务的数据访问。
+
+为了克服这些挑战，我们基于数据网关平台开发了一种全面方法，并基于此创建了几个基础抽象服务，其中最成熟的是键值（KV）数据抽象层（DAL）。这种抽象简化了数据访问，增强了基础设施的可靠性，并使我们能够以最小的开发工作量支持 Netflix 所需的广泛用例。
+
+本文将深入探讨 Netflix 的键值（KV）抽象的工作原理、指导其设计的架构原则、在扩展各种用例时所面临的挑战，以及使我们能够实现 Netflix 全球运营所需性能和可靠性的技术创新。
+
+#### 键值服务
+
+KV 数据抽象服务的引入是为了解决分布式数据库中数据访问模式所面临的持续性难题，目标是构建通用且高效的数据存储解决方案，能够处理各种应用场景，从最简单的哈希表到更复杂的数据结构，同时还要确保高可用性、可调一致性以及低延迟。
+
+##### 数据模型
+
+KV 抽象的核心是围绕 ***两级映射（two-level map）*** 架构构建的，第一级是散列字符串 ***ID***（主键），第二级是 ***键值对字节的排序映射***。该模型支持简单和复杂的数据模型，平衡了灵活性和效率。
+
+```java
+HashMap<String, SortedMap<Bytes, Bytes>>
+```
+
+对于诸如结构化记录或时间序列事件这类复杂数据模型，这种两级处理方法能够有效处理层次结构，从而能够将相关数据一起检索出来。对于更简单的用例，也能表示扁平键值映射（例如：`id → {"" → value}`）或命名集合（例如：`id → {key → ""}`）。这种适应性使得键值抽象能够应用于数百种不同的用例，使其成为 Netflix 这样的大规模基础设施中管理简单和复杂数据模型的多功能解决方案。
+
+KV 数据可以在高水平上可视化，如下图所示，其中显示了三条记录。
+
+![](https://image.deepnomind.com/blog/image/32d9f25708843db0c75b6161a5d6f312)
+
+```java
+message Item (   
+  Bytes    key,
+  Bytes    value,
+  Metadata metadata,
+  Integer  chunk
+)
+```
+
+##### 数据库抽象
+
+KV 抽象设计的目的是隐藏底层数据库实现细节，为应用开发人员提供一致的接口，无论针对该用例的最佳存储系统是什么，都能适用。虽然 Cassandra 是一个例子，但该抽象机制可与诸如 [EVCache](https://github.com/Netflix/EVCache "EVCache")、[DynamoDB](https://aws.amazon.com/dynamodb "DynamoDB")、[RocksDB](https://rocksdb.org "RocksDB") 等等多种数据存储系统兼容。
+
+例如，当底层为 Cassandra 时，抽象层利用 Cassandra 的分区和集群功能，记录 ***ID*** 作为分区键，字段 ***key*** 作为集群列：
+
+![](https://image.deepnomind.com/blog/image/35e1241e5ce5064dfc3829910fe33378)
+
+该结构在 Cassandra 中对应的数据定义语言（DDL，Data Definition Language）是：
+
+```sql
+CREATE TABLE IF NOT EXISTS <ns>.<table> (
+  id             text,
+  key            blob,
+  value          blob,
+  value_metadata blob,
+
+PRIMARY KEY (id, key))
+WITH CLUSTERING ORDER BY (key <ASC|DESC>)
+```
+
+##### 命名空间：逻辑和物理配置
+
+**命名空间**定义了数据的存储位置和存储方式，实现了逻辑与物理上的分离，并对底层存储系统进行了抽象处理，并作为访问模式（如一致性或延迟目标）的集中配置中心。每个命名空间可以使用不同的后端：Cassandra、EVCache 或多种后端的组合。这种灵活性使我们的数据平台能够根据性能、持久性和一致性需求将不同用例路由到最合适的存储系统。开发人员只需提出数据问题，而无需提供数据库解决方案！
+
+在下例中，`ngsegment`命名空间同时受到 Cassandra 集群和 EVCache 缓存层的支持，从而支持高度持久的持久化存储和低延迟的点读取。
+
+```json
+"persistence_configuration":[
+  {
+    "id":"PRIMARY_STORAGE",
+    "physical_storage": {
+      "type":"CASSANDRA",
+      "cluster":"cassandra_kv_ngsegment",
+      "dataset":"ngsegment",
+      "table":"ngsegment",
+      "regions": ["us-east-1"],
+      "config": {
+        "consistency_scope": "LOCAL",
+        "consistency_target": "READ_YOUR_WRITES"
+      }
+    }
+  },
+  {
+    "id":"CACHE",
+    "physical_storage": {
+      "type":"CACHE",
+      "cluster":"evcache_kv_ngsegment"
+     },
+     "config": {
+       "default_cache_ttl": 180s
+     }
+  }
+]
+```
+
+#### KV 抽象的关键 API
+
+为了支持不同用例，KV 抽象提供了四个基本的CRUD API：
+
+##### PutItems — 将一个或多个条目写入记录
+
+`PutItems` API 是一种“插入或更新”操作，能够在两级映射结构中插入新数据或者更新现有数据。
+
+```java
+message PutItemRequest (
+  IdempotencyToken idempotency_token,
+  string           namespace, 
+  string           id, 
+  List<Item>       items
+)
+```
+
+如上所述，该请求包含命名空间、记录 ID、一个或多个条目以及幂等性令牌，以确保对同一写入操作的重试是安全的。可以先将数据分块存储，然后通过适当的元数据（例如分块数量）进行提交，从而实现数据的分块写入。
+
+##### GetItems — 从记录中读取一个或多个记录
+
+`GetItems` API 提供了一种结构化和自适应的方法，可以基于 ID、过滤条件和选择机制来获取数据。这种方法平衡了检索大量数据的需求，同时满足严格的服务水平目标（SLO，Service Level Objectives），以提高性能和可靠性。
+
+```java
+message GetItemsRequest (
+  String              namespace,
+  String              id,
+  Predicate           predicate,
+  Selection           selection,
+  Map<String, Struct> signals
+)
+```
+
+`GetItemsRequest`包含几个关键参数：
+- **Namespace（命名空间）**：用于指定逻辑数据集或表
+- **Id**：标识顶级 HashMap 中的条目
+- **Predicate（谓词过滤条件）**：用于筛选匹配项，并可检索所有项（`match_all`）、特定项（`match_keys`）或范围（`match_range`）
+- **Selection（选择机制）**：用于缩小返回响应的范围，例如用于分页的 `page_size_bytes`、用于限制页面内总项数的 `item_limit` 以及 `include`/`exclude` 用于包含或排除响应中的大值
+- **Signals（信号）**：提供带内信号以指示客户端能力，例如支持客户端压缩或分块。
+
+`GetItemResponse` 消息包含匹配的数据：
+
+```java
+message GetItemResponse (
+  List<Item>       items,
+  Optional<String> next_page_token
+)
+```
+
+- **Items（记录项）**：基于请求中定义的`Predicate`和`Selection`的检索项列表。
+- **Next Page Token（下一页令牌）**：一个可选的令牌，指示后续读取的位置，对于跨多个请求处理大型数据集至关重要。分页是有效管理数据检索的关键组件，特别是在处理可能超过典型响应大小限制的大型数据集时。
+
+##### DeleteItems — 从记录中删除一个或多个记录
+
+`DeleteItems` API为删除数据提供了灵活选项，包括基于记录、基于项和基于范围的删除，并且都支持幂等性。
+
+```java
+message DeleteItemsRequest (
+  IdempotencyToken idempotency_token,
+  String           namespace,
+  String           id,
+  Predicate        predicate
+)
+```
+
+就像在`GetItems` API中一样，过滤条件允许一次对一个或多个记录进行寻址：
+
+- **基于记录（Record-Level）删除（match_all）**：以恒定的延迟删除整个记录，而不管记录中有多少项。
+- **基于范围（Item-Range）删除（match_range）**：删除一条记录中的一段条目。用于保持“n-最新”或前缀路径删除。
+- **基于项（Item-Level）删除（match_keys）**：删除一个或多个单独的项。
+
+某些存储引擎（任何延迟真正删除的存储），如 Cassandra，由于删除标记（tombstone）和压缩开销而与大量删除作斗争。Key-Value 优化记录和范围删除，为操作生成单个删除标记（关于删除和删除标记的更多信息可以参考 [About Deletes and Tombstones](https://thelastpickle.com/blog/2016/07/27/about-deletes-and-tombstones.html "About Deletes and Tombstones")）。
+
+基于项的删除创建了许多删除标记，但 KV 通过基于 TTL 的抖动删除隐藏了存储引擎的复杂性。不是立即删除，而是将项数据更新为过期，并基于随机抖动的 TTL 将删除操作错开。这种技术维护了读分页保护。虽然这并不能完全解决问题，但减少了负载峰值，并有助于在压缩时保持一致的性能。这些策略有助于维护系统性能，减少读开销，并通过最小化删除的影响来满足 SLO。
+
+##### 复合操作（Complex Mutate）和扫描 API
+
+除了对单个记录进行简单的 CRUD 操作之外，KV 还支持通过 `MutateItems` 和 `ScanItems` API 进行复杂的多项和多记录修改及扫描操作。`PutItems` 也支持通过分块协议对单个 `Item` 的大型二进制数据进行原子写入。这些复杂 API 需要仔细考虑以确保具有可预测的线性低延迟性能。
+
+#### 可靠、可预测性能的设计理念
+
+##### 对抗尾延迟的幂等性
+
+为确保数据完整性，`PutItems` 和 `DeleteItems` 这两个 API 使用了幂等性令牌，能够唯一标识每次修改操作，并保证即使在并发处理或因延迟而重试的情况下，操作也能按逻辑顺序正确执行。这对于像 Cassandra 这样的“最后写入胜出”的数据库尤为重要，因为确保请求的正确顺序和去重至关重要。
+
+在 KV 抽象中，幂等令牌包含生成时间戳和随机数令牌。后端存储引擎可能需要其中的一个或两个来对修改操作进行去重处理。
+
+```java
+message IdempotencyToken (
+  Timestamp generation_time,
+  String    token
+)
+```
+
+在 Netflix，客户端生成的单调令牌更受青睐，在网络延迟可能影响服务器端令牌生成的环境中，该方案的可靠性更高。可以将客户端提供的生成时间戳（`generation_time`）与一个 128 位随机 UUID 令牌相（`token`）结合。尽管基于时钟的令牌生成可能会受到时钟偏差的影响，但我们对 EC2 Nitro 实例的测试显示，偏差极小（不到 1 毫秒）。在某些需要更强有序性的情况下，可以使用像 Zookeeper 这样的工具生成域内唯一令牌，或者使用像事务 ID 这样的全局唯一令牌。
+
+以下图表展示了我们在 Cassandra 集群中所观察到的[时钟偏差](https://docs.google.com/document/d/1XLBjQ9scZCy-xIo51Rs--CSdFV781fnp5hXdXTBAk1k/edit "时钟偏差")情况，表明该技术在能够直接访问高质量时钟的现代云虚拟机上是安全可靠的。为了进一步确保安全性，键值服务器会拒绝带有较大偏差的令牌进行写入操作，从而防止在存储引擎中出现默写丢弃（即写入的时戳远在过去）以及不可变的灾难性写入（即写入的时戳远在未来），这些情况在易受此类影响的存储引擎中是存在的。
+
+![](https://image.deepnomind.com/blog/image/f4a9f4aea5d5b327fa43eeda7b897b46)
+
+##### 通过分块处理大数据
+
+Key-Value 还设计为有效处理大型 blob，这是传统 KV 存储的常见挑战。数据库经常面临每个键或分区可以存储的数据量的限制。为了解决这些限制，KV 使用透明分块来有效管理大数据。
+
+对于小于 1 MiB 的项，数据直接存储在主备份存储（例如 Cassandra）中，确保快速有效的访问。但是，对于较大的项，只有 **id**、**key**和**元数据** 存储在主存储中，而实际数据被分割成更小的块并单独存储在块存储中。这个块存储也可以是 Cassandra，但是使用不同的分区方案来优化处理大值，并通过幂等令牌将所有写操作连接到一个原子操作中。
+
+通过将大项分成块，我们确保延迟与数据大小成线性关系，使系统既可预测又高效。
+
+##### 客户端压缩
+
+KV 抽象利用客户端有效负载压缩来优化性能，特别是对于大数据传输。虽然许多数据库提供服务器端压缩，但在客户端处理压缩可以减少昂贵的服务器 CPU 使用、网络带宽和磁盘 I/O。例如在我们的某个为 Netflix 搜索提供支持的部署中，通过客户端压缩减少了 75% 的有效负载，显著提高了成本效率。
+
+##### 智能分页
+
+我们选择以字节为单位来设定每个响应页面的负载大小上限，而非以项数量为限，这样做有助于制定可预测的操作服务级别协议（SLO）。例如，对于 2 MiB 的页面读取操作，我们可以提供一位数毫秒级的服务级别协议。相反，如果以每页的项数量作为限制条件，由于项大小存在显著差异，会导致不可预测的延迟。比如，每页请求 10 个项时，每个项目大小为 1 KiB 与 1 MiB 时，延迟可能会有很大差异。
+
+使用字节作为限制会带来挑战，因为很少有后备存储支持基于字节的分页，大多数数据存储都是基于结果的数量，例如 DynamoDB 和 Cassandra 都是基于项或行数进行限制。为了解决这个问题，我们对后端存储的初始查询使用静态限制，基于此进行查询，并处理结果。如果需要更多数据来满足字节限制，则执行额外的查询，直到满足限制为止，多余的结果将被丢弃，并生成一个页令牌。
+
+这种静态限制可能导致效率低下，结果中的一个大条目可能导致我们丢弃许多结果，而小条目可能需要多次迭代才能填充一页，从而导致读取放大。为了缓解这些问题，我们实现了自适应分页，可以根据观察到的数据动态调整限制。
+
+##### 自适应分页
+
+发出初始请求时，在存储引擎中执行查询，并检索结果。当消费者处理结果时，系统会跟踪消费的数据项数量和使用的大小。该数据有助于计算项的大致大小，该大小存储在页令牌中。对于后续的页请求，这些信息允许服务器对底层存储应用适当的限制，从而减少不必要的工作并最大限度减少读取放大。
+
+虽然这种方法对于后续页请求是有效的，但是对于初始请求会发生什么呢？除了在页令牌中存储项大小信息外，服务器还估计给定命名空间的平均项大小并将其缓存在本地。这个缓存的估计有助于服务器为初始请求设置更优的后端存储限制，从而提高效率。服务器根据最近的查询模式或其他因素不断调整该限制，以保持其准确性。对于后续页，服务器使用缓存的数据和页令牌中的信息来微调限制。
+
+![](https://image.deepnomind.com/blog/image/9b1b941c11336c06c3ae1e25b3835552)
+
+除了自适应分页之外，还有一种机制，如果服务器检测到处理请求有超过请求延迟 SLO 的风险，则可以尽早发送响应。
+
+例如，假设一位客户提交了一个`GetItems`请求，每页数据大小限制为 2 MiB，最大端到端延迟限制为 500 毫秒。在处理此请求时，服务器会从存储库中检索数据。此特定记录包含数千个小项，因此通常需要的时间会超过 500 毫秒的服务级别协议（SLO），才能收集完整页数据。如果发生这种情况，客户端将收到违反 SLO 的错误，导致请求失败，尽管实际上并没有出现异常情况。为防止这种情况发生，服务器会跟踪获取数据所花费的时间。如果确定继续检索更多数据可能会违反 SLO，服务器将停止处理进一步的结果，并返回带有分页令牌的响应。
+
+![](https://image.deepnomind.com/blog/image/612ea7b795688c44bbf9e9bc3bf3f668)
+
+这种方法确保在 SLO 内处理请求，即使没有满足完整的页大小，也可以为客户端提供可预测的进度。此外，如果客户端是具有适当截止时间的 gRPC 服务器，则客户端会足够聪明，不会发出进一步的请求，从而减少无用工。
+
+如果想了解更多信息，请参阅 [How Netflix Ensures Highly-Reliable Online Stateful Systems](https://www.infoq.com/articles/netflix-highly-reliable-stateful-systems "How Netflix Ensures Highly-Reliable Online Stateful Systems")。
+
+##### 信号
+
+KV 使用的带内消息通信的方式我们称之为“信令”，能够实现客户端的动态配置，并使客户端能够向服务器传达其功能信息。这确保了客户端和服务器之间能够无缝交换配置设置和调优参数。如果没有信令，客户端就需要进行静态配置（每次变更都需重新部署），或者采用动态配置方式，但这样就需要与客户端团队进行协调。
+
+对于服务端信号，当客户端初始化时，会向服务器发送握手信号。服务器则会以信号的形式作出回应，例如目标或最大延迟的 SLO，使客户端能够动态调整超时时间和风控策略。随后会在后台定期进行握手操作，以保持配置的准确性。对于客户端信号，客户端在每次请求时都会告知其自身能力，例如是否能够处理压缩、分块以及其他功能。
+
+![](https://image.deepnomind.com/blog/image/534a01dff88fb511fe594ae3de027089)
+
+#### KV 在 Netflix 的使用情况
+
+KV 抽象技术支撑了 Netflix 的多项关键应用场景，包括：
+
+- **流媒体元数据**：实现高吞吐量、低延迟的流媒体元数据访问，确保实时提供个性化内容。
+- **用户档案**：高效存储和检索用户偏好及历史记录，实现跨设备的无缝、个性化体验。
+- **消息传递**：存储和检索用于消息传递需求的[推送注册表](https://netflixtechblog.com/pushy-to-the-limit-evolving-netflixs-websocket-proxy-for-the-future-b468bc0ff658 "Pushy to the limit evolving Netflix's WebSocket proxy for the future")，使数百万次请求能够顺利传递。
+- **实时分析**：持续处理大规模展示数据，并提供有关用户行为和系统性能的洞察，[将数据从离线状态转换为在线状态](https://netflixtechblog.com/bulldozer-batch-data-moving-from-data-warehouse-to-online-key-value-stores-41bac13863f8 "Bulldozer: Batch data moving from data warehouse to online key-value stores")，反之亦然。
+
+#### 下一步工作
+
+展望未来，我们计划通过以下方式来进一步完善 KV 抽象：
+
+- **生命周期管理**：对数据保留和删除进行精细控制。
+- **汇总**：通过将包含大量项的记录汇总为较少的备份行来提高检索效率的技术。
+- **新存储引擎**：与更多存储系统集成，以支持新的用例。
+- **字典压缩**：在保持性能的同时进一步减小数据大小。
+
+#### 结论
+
+Netflix 的键值服务是一种灵活且经济高效的解决方案，能够适应各种数据模式和应用场景，从低流量到高流量的情况都有涵盖，包括 Netflix 流媒体的关键使用场景。其简洁而强大的设计使其能够处理各种数据模型，如哈希映射、集合、事件存储、列表和图等。它将底层数据库的复杂性从开发人员那里抽象出来，使应用工程师能够专注于解决业务问题，而无需成为每个存储引擎及其分布式一致性模型的专家。随着 Netflix 在在线数据存储方面的不断创新，键值抽象仍然是高效且可靠的大规模管理数据的核心组成部分，为未来的增长奠定了坚实基础。
