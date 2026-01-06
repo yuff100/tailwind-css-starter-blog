@@ -1,0 +1,465 @@
+---
+title: 'Keras极简入门教程'
+date: '2019-01-19'
+tags: ['人工智能']
+draft: false
+summary: '本文介绍了如何使用 Python 和 Keras 构造卷积神经网络，并在 MNIST 数据集上训练手写体数字分类器。'
+---
+
+> *本文是《Keras Tutorial：The Ultimate Beginner's Guide to Deep Learning in Python》的中文翻译，有些代码的语法以及命令的输出根据最新的版本做了少量修正。*
+
+_以下为正文：_
+
+在这篇教程中，你将会学到怎样用Python构造一个卷积神经网络。事实上，我们会训练一个可以识别手写体数字的分类器，并且在著名的MNIST数据集上达到99%的准确性。
+
+在开始之前，请注意，这篇教程的目标读者是对应用深度学习感兴趣的初学者。
+
+> _（所以，如果你是老手，就不用往下看了）_
+
+我们的目标是向你介绍一个用来构造神经网络的最流行和强大的Python库，所以我们会略过大部分理论和数学原理，但我们会提供一些相关的学习资源供你进一步学习。
+
+### 在我们开始之前...
+
+#### 预备知识：
+
+这篇教程的预备知识包括：
+
+*   理解机器学习的核心概念
+    
+*   Python编程
+    
+
+我们假设你已经具备了这些基础知识。
+
+#### 为什么用Keras？
+
+我们建议初学者使用基于Python的Keras学习深度学习，其简约、模块化的设计使得初学者可以非常方便的运行神经网络。这篇文章里有更多的介绍：The Keras library for deep learning in Python
+
+#### 到底什么是深度学习？
+
+深度学习是指利用具有多个隐藏层的神经网络，对输入数据进行特征学习的算法。这是一个明显简单化的定义，但对我们现在来说已经足够了。  
+_（特征学习是指从数据中提取特征，以及学习如何提取特征）_
+
+例如，深度学习导致了计算机视觉技术的重大进步。我们现在可以对图片进行分类、在图片中找出物体并进行标注。为了达到这些，具有很大隐藏层的深度神经网络可以从原始输入图片中依次学习很多复杂的特征：
+
+*   第一个隐藏层可能只学习局部边缘模式
+    
+*   然后，接下来的每一层（或者过滤器）学习更复杂的特征
+    
+*   最终，最后一层可以把图片识别为一只猫或是一只袋鼠
+    
+
+这种类型的深度神经网络被称为_卷积神经网络_。
+
+#### 到底什么是卷积神经网络？
+
+简而言之，卷积神经网络（CNN）是一个把输入数据看作图片的多层（有时候有17层或者更多层）神经网络。
+
+![典型CNN架构](https://image.deepnomind.com/blog/image/19bcf766b7631886f813029191e5445a)
+
+根据这一要求，CNN可以大幅减少需要调整的参数数量。因此，CNN可以有效的处理原始图片的高维信息。CNN的底层机制超出了本教程的范围，有兴趣的同学可以参考这里。
+
+#### 本教程不是：
+
+不是完整的深度学习课程，相反，本教程希望能让你以尽量小的代价从0开始实现卷积神经网络。
+
+如果你希望能掌握深度学习背后的原理，我们建议你学习斯坦福大学的课程：  
+[CS231n: Convolutional Neural Networks for Visual Recognition](https://cs231n.stanford.edu/)
+
+#### 开始之前的小贴士：
+
+我们希望本教程尽量精简，这就意味着我们不会涉及到太多细节，所以如果你想了解更多Keras函数/模块的细节的话，查看Keras的官方文档会很有帮助。
+
+### Keras教程内容
+
+#### 下面是用Keras构造你的第一个CNN的步骤：
+
+1.  设置运行环境。
+    
+2.  安装Keras。
+    
+3.  加载库和模块。
+    
+4.  从MNIST加载图片数据。
+    
+5.  输入数据预处理。
+    
+6.  分类标签预处理。
+    
+7.  定义模型架构。
+    
+8.  编译模型。
+    
+9.  用训练数据训练模型。
+    
+10.  用测试数据评估模型。
+    
+
+* * *
+
+#### 步骤1：设置运行环境
+
+首先，挂上一张鸡血海报：
+
+![也许没用](https://image.deepnomind.com/blog/image/a1fe050effcfdd577bd9766804e0e59a)
+
+然后，确认你所使用的系统已经安装了下面这些工具：
+
+*   Python 2.7+（Python 3也可以，但是Python2.7在数据科学领域更常用）
+    
+*   SciPy、NumPy
+    
+*   Matplotlib（可选，推荐用这个库进行探索性分析）
+    
+*   Theano（安装说明。Keras也支持TensorFlow，但我们还是选择用更为简单的Theano。主要区别在于，当你把数据输入神经网络的时候需要对数据进行轻微的整形）
+    
+
+我们强烈建议通过Anaconda安装Python、NumPy、SciPy以及Matplotlib，Anaconda发行版包含了所有这些工具。
+
+##### 通过如下命令查看是不是所有工具都安装好了：
+
+打开命令行工具（Mac上是终端），输入：
+
+```bash
+$ python
+```
+
+你将会看到Python解释器：
+
+```bash
+Python 2.7.12 |Anaconda 4.0.0 (x86_64)| (default, Jul  2 2016, 17:43:17)
+```
+
+下一步，你可以加载库， 并且打印出他们的版本：
+
+```bash
+>>> import numpy>>> print numpy.__version__1.15.4
+>>> import theano>>> print theano.__version__1.0.4
+>>> quit()
+```
+
+#### 步骤2：安装Keras
+
+作为Keras教程，我们肯定需要介绍Keras的安装。  
+好消息是如果你用了Anaconda，那你就已经有了一个优秀的包管理工具--pip。  
+你可以通过在命令行里输`$ pip`来确认是否安装了pip。这个命令会显示一系列的命令和配置。如果你还没有安装pip，可以参考官方文档。
+
+一旦有了pip，安装Keras就很简单了：
+
+```bash
+$ pip install keras
+```
+
+##### 可以通过以下命令确认Keras是否安装成功：
+
+```bash
+$ python -c "import keras; print keras.__version__"
+Using Theano backend.1.0.4
+```
+
+> 如果显示Using TensorFlow backend，没关系，打开`~/.keras/keras.json`，设置`"backend": "theano"`，然后再试一遍。
+
+糟糕，Keras的版本看上去太旧了。不过更新也很容易：
+
+```bash
+$ pip install --upgrade keras
+...
+
+$ python -c "import keras; print keras.__version__"
+Using Theano backend.2.2.4
+```
+
+完美！现在我们打开一个新的Python源码文件，并把它命名为`keras_cnn_example.py`。
+
+#### 步骤3：加载库和模块
+
+首先，需要加载numpy，以及设置伪随机数种子，保证每次运行脚本都可以重现结果。
+
+```python
+import numpy as np
+np.random.seed(123)  # for reproducibility
+```
+
+然后，从Keras导入线性模型类。这是一个简单的线性神经网络层，非常适合用在正在构建的前馈CNN中。
+
+```python
+from keras.models import Sequential
+```
+
+下一步，从Keras导入核心层，这些层几乎所有的神经网络都会用到：
+
+```python
+from keras.layers import Dense, Dropout, Activation, Flatten
+```
+
+然后，从Keras导入CNN层，这些卷积层可以帮助我们有效处理图像数据：
+
+```python
+from keras.layers import Conv2D, MaxPooling2D
+```
+
+最后，加载工具模块，这些模块可以帮助我们进行数据转换：
+
+```python
+from keras.utils import np_utils
+```
+
+现在我们有了构造神经网络架构的所有东西！
+
+#### 步骤4：从MNIST加载图片数据
+
+MNIST是非常适合用来学习深度学习和计算机视觉的数据集。它足够大，可以用来训练神经网络，但又没有大到超过单台PC的处理能力。我们在之前的一篇文章里讨论过这个数据集：给初学者的6个有趣的机器学习项目.  
+Keras库可以帮助我们方便的加载数据：
+
+```python
+from keras.datasets import mnist
+
+# Load pre-shuffled MNIST data into train and test sets
+(X_train, y_train), (X_test, y_test) = mnist.load_data()
+```
+
+我们可以用如下命令查看数据集的维度：
+
+```python
+print X_train.shape
+# (60000, 28, 28)
+```
+
+很好！我们的训练集里有60000个样本，每个图片样本是28像素×28像素的大小。我们可以用matplotlib绘制第一个样本来确认：
+
+```python
+from matplotlib import pyplot as plt
+plt.imshow(X_train[0])
+```
+
+显示如下图片：
+
+![](https://image.deepnomind.com/blog/image/6537dc374f83fd5c19102febdc638ab4)
+
+总之，在做计算机视觉相关工作的时候，通过把样本绘制出来的方式进行完整性检查可以有效避免一些低级错误（比方说误判数据规格大小等）。
+
+#### 步骤5：输入数据预处理
+
+用Theano作为后端时，需要显式的声明输入图片的深度。例如，一幅拥有3个RGB通道的全彩图像的深度为3.  
+我们使用的MNIST图片的深度只有1，但还是需要显式的声明。  
+换句话说，需要把数据集的维度从(样本个数，宽度，高度)转换为(样本个数，深度，宽度，高度)。  
+我们可以简单的做到这一点：
+
+```python
+X_train = X_train.reshape(X_train.shape[0], 1, 28, 28)
+X_test = X_test.reshape(X_test.shape[0], 1, 28, 28)
+```
+
+然后打印`X_train`的维度确认一下：
+
+```python
+print X_train.shape
+# (60000, 1, 28, 28)
+```
+
+最后，把数据类型转换为float32，并且把数据值归一化到\[0,1\]的区间。
+
+```python
+X_train = X_train.astype('float32')
+X_test = X_test.astype('float32')
+X_train /= 255
+X_test /= 255
+```
+
+现在，我们的数据已经准备好了，可以开始训练模型了。
+
+#### 步骤6：分类标签预处理
+
+接下来，让我们先看一下分类标签数据集的维度：
+
+```python
+print y_train.shape
+# (60000,)
+```
+
+呃……好像有点问题。我们应该有10个不同的类型，每个数字一个，但看上去我们现在只有一个一维数组。我们把前10个标签打印出来看看：
+
+```python
+print y_train[:10]
+# [5 0 4 1 9 2 1 3 1 4]
+```
+
+这就是问题！`y_train`和`y_test`数据集并没有被拆分为10个不同的分类标签，而是一个包含有类型值的一维数组。  
+我们可以简单的处理一下：
+
+```python
+# Convert 1-dimensional class arrays to 10-dimensional class matrices
+Y_train = np_utils.to_categorical(y_train, 10)
+Y_test = np_utils.to_categorical(y_test, 10)
+```
+
+现在我们再看一下：
+
+```python
+print Y_train.shape
+# (60000, 10)
+```
+
+好了，现在看上去好多了。
+
+#### 步骤7：定义模型架构
+
+现在我们已经准备好要定义模型架构了。在实际工作中，数据科学家会花很多时间研究模型架构。  
+我们不打算在这里讨论复杂的理论和数学问题，感兴趣的同学可以学习前面提到的CS231n课程。  
+另外，在你刚开始学习的时候，可以使用学术论文和示例中已经被验证过的架构，这里是Keras里实现的示例列表。  
+我们从声明一个线性模型开始：
+
+```python
+model = Sequential()
+```
+
+然后我们定义一个输入层：
+
+```python
+model.add(Conv2D(32, (3, 3), activation='relu', input_shape=(1, 28, 28)))
+```
+
+输入的维度参数为单个样本的维度。在这里，(1, 28, 28)表示每个图片的(深度，宽度，高度)。  
+但前面3个参数是什么意思？他们分别对应于要使用的卷积滤波器的数量、每个卷积内核的行数以及列数。  
+_注意：默认情况下，步长为(1,1)，可以使用`subsample`参数进行调整。_  
+我们可以打印当前模型的输出维度确认一下：
+
+```python
+print model.output_shape
+# (None, 32, 26, 26)
+```
+
+> 如果你执行了上面的代码，但是结果是(None, -1, 26, 32)，那说明Keras的配置不正确。修改`~/.keras/keras.json`，设置`"image_data_format": "channels_first"`，再试一遍看看。
+
+接下来添加更多的层，就和玩乐高差不多：
+
+```python
+model.add(Conv2D(32, (3, 3), activation='relu'))
+model.add(MaxPooling2D(pool_size=(2,2)))
+model.add(Dropout(0.25))
+```
+
+同样的，我们不打算介绍太多理论知识，只是对于刚加进去的Dropout层需要强调一下。这是一个用来正则化我们的模型，从而可以避免过拟合的方法。这里有更多关于Dropout层的内容。  
+MaxPooling2D通过在上一层上滑动一个2×2的池化过滤器，在这个2×2的过滤器里取最大的4个值，从而达到减少模型参数的目的。  
+到目前为止，我们添加了2个和模型参数有关的卷积层。为了完成我们的模型，我们需要添加一个完全连接层和一个输出层：
+
+```python
+model.add(Flatten())
+model.add(Dense(128, activation='relu'))
+model.add(Dropout(0.5))
+model.add(Dense(10, activation='softmax'))
+```
+
+Dense层的第一个参数是输出的大小，Keras可以自动把不同的层连接起来。  
+注意最后一层的输出大小是10，因为一共有10个数字。  
+还要注意卷积层的权重必须在传递到全连接的Dense层之前完全展开（展开成1维数组）。  
+整个模型代码如下：
+
+```python
+model = Sequential()
+
+model.add(Conv2D(32, (3, 3), activation='relu', input_shape=(1, 28, 28)))
+model.add(Conv2D(32, (3, 3), activation='relu'))
+model.add(MaxPooling2D(pool_size=(2,2)))
+model.add(Dropout(0.25))
+
+model.add(Flatten())
+model.add(Dense(128, activation='relu', input_shape=(1, 28, 28)))
+model.add(Dropout(0.5))
+model.add(Dense(10, activation='softmax'))
+```
+
+现在我们只需要定义损失函数和优化器，然后就可以开始训练了。
+
+#### 步骤8：编译模型
+
+我们可以舒展舒展筋骨了，最困难的部分已经做完了。  
+我们只需要编译模型，然后准备训练。当我们编译模型的时候，我们需要定义损失函数和优化器（SGD、Adam、等等）。
+
+```python
+model.compile(loss='categorical_crossentropy',
+                    optimizer='adam',
+                    metrics=['accuracy'])
+```
+
+Keras有很多开箱即用的损失函数和优化器可供选择。
+
+#### 步骤9：用训练数据训练模型
+
+训练模型的时候，我们唯一需要做的就是定义每次训练多少样本，以及训练多少次数，然后输入训练数据就行了。
+
+```python
+model.fit(X_train, Y_train,
+        batch_size=32, epochs=10, verbose=1)
+# Epoch 1/10
+# 31648/60000 [==============>...............] - ETA: 36s - loss: 0.2702 - acc: 0.9161 
+```
+
+简单吧？  
+你还可以用不同的回调函数设置训练的提前结束规则，保存模型权重，或者记录每次训练周期的历史记录。
+
+#### 步骤10：用测试数据评估模型
+
+最后，我们可以用测试数据评估我们的模型：
+
+```python
+score = model.evaluate(X_test, Y_test, verbose=0)
+```
+
+恭喜你！你已经完成了这个Keras教程！  
+我们刚刚完成了Keras核心功能的旋风之旅，但我们仅仅只是触及了表面，希望你已经获得了进一步探索Keras的基础。  
+下一步，建议你学习Keras提供的其他的模型实例，以及斯坦福大学的计算机视觉课程。
+
+#### 以下是本教程的完整示例代码
+
+```python
+# 3. Import libraries and modules
+import numpy as np
+np.random.seed(123)  # for reproducibility
+
+from keras.models import Sequential
+from kera.layers import Dense, Dropout, Activation, Flatten
+from keras.layers import Conv2D, MaxPoolilng2D
+from keras.utils import np_utils
+from keras.datasets import mnist
+
+# 4. Load pre-shuffled MNIST data into train and test sets
+(X_train, y_train), (X_test, y_test) = mnist.load_data()
+
+# 5. Preprocess input data
+X_train = X_train.reshape(X_train.shape[0], 1, 28, 28)
+X_test = X_test.reshape(X_test.shape[0], 1, 28, 28)
+X_train = X_train.astype('float32')
+X_test = X_test.astype('float32')
+X_train /= 255
+X_test /= 255
+
+# 6. Preprocess class labels
+Y_train = np_utils.to_categorical(y_train, 10)
+Y_test = np_utils.to_categorical(y_test, 10)
+
+# 7. Define model architecture
+model = Sequential()
+
+model.add(Conv2D(32, (3, 3), activation='relu', input_shape(1, 28, 28)))
+model.add(Conv2D(32, (3, 3), activation='relu'))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+model.add(Dropout(0.25))
+
+model.add(Flatten())
+model.add(Dense(128, activation='relu'))
+model.add(Dropout(0.5))
+model.add(Dense(10, activation='softmax'))
+
+# 8. Compile model
+model.compile(loss='categorical_crossentropy',
+              optimizer='adam',
+              metrics=['accuracy'])
+
+# 9. Fit model on training data
+model.fit(X_train, Y_train,
+          batch_size=32, epochs=10, verbose=1)
+
+# 10. Evaluate model on test data
+score = model.evalute(X_test, Y_test, verbose=0)
+```
