@@ -1,0 +1,274 @@
+---
+title: '[大厂实践] Pinterest Ray 基础设施实践'
+date: '2025-03-12'
+tags: ['人工智能','大厂实践']
+draft: false
+summary: '本文介绍了 Pinterest 打造的 Ray 基础设施，从而在用户和 Kubernetes 之间提供了宝贵的抽象层，使用户无需理解复杂的 Kubernetes 工件，利用平台提供的库将繁重的调配步骤从客户端转移到Kubernetes，从而精简流程、简化步骤，提升整体用户体验。'
+---
+
+> _本文介绍了 Pinterest 打造的 Ray 基础设施，从而在用户和 Kubernetes 之间提供了宝贵的抽象层，使用户无需理解复杂的 Kubernetes 工件，利用平台提供的库将繁重的调配步骤从客户端转移到Kubernetes，从而精简流程、简化步骤，提升整体用户体验。原文：_[_Ray Infrastructure at Pinterest_](https://medium.com/pinterest-engineering/ray-infrastructure-at-pinterest-0248efe4fd52)
+
+#### Ray 基础设施之旅
+
+在上一篇文章中，我们讨论了投资 Ray 以解决关键业务问题的原因。本文将进一步介绍如何将 Ray 集成到 Pinterest 这样规模的公司中，讨论在采用新技术时会遇到各种独特限制和挑战。
+
+在我们的用例中，像 KubeRay 那样配置 Ray 集群的能力只是成熟 Ray 基础设施的一部分。公司需要遵循 Ray 建议的所有[最佳实践](https://docs.ray.io/en/latest/cluster/vms/user-guides/large-cluster-best-practices.html)和特定需求，包括日志、指标持久性、网络隔离、确定最佳硬件实例、安全性、流量设置以及与其他内部服务集成。
+
+2023 年，一名全职工程师将 50% 的时间投入到该项目，从此开始了这一征程：
+
+- 2023 年一季度：在合作伙伴 Anyscale 的协助下启动项目原型
+
+- 2023 年二季度：完成 Ray 基础设施的MVP，包括日志、指标、用户界面和 CLI 等基本工具，并对其进行迭代和增强
+
+- 2023 年三季度：重点转向第一个生产用例，涉及内部系统（如工作流系统）的集成，以提高服务稳定性
+
+- 2023 年四季度：重点是为生产做好准备，解决安全问题，提高网络稳定性，评估向 Ray 优化的 Kubernetes 环境过渡的情况
+
+![](https://image.deepnomind.com/blog/image/fce4c3c5a714b9e99595bf112b3fdade)
+
+##### 面临的挑战
+
+在 Pinterest 建立 Ray 基础设施时，遇到了几个需要解决的关键难题：
+
+- 对 K8S API 的访问受限：在 Pinterest 的通用 Kubernetes 联邦集群 [PinCompute](https://readmedium.com/pincompute-a-kubernetes-backed-general-purpose-compute-platform-for-pinterest-8ad408df2d6f) 上运行，限制了 KubeRay 及其自定义资源定义等必要 operator 的安装。
+
+- 临时日志和指标：当 Ray 集群处于活跃状态时，可通过 Ray 控制面板查看日志和指标，但仅为调试目的而维护资源密集型 Ray 集群并不现实。因此，我们需要找到一种持久化重放 Ray 工作负载生命周期的解决方案。
+
+- 指标集成：公司有自己版本的时间序列数据库和可视化工具，与 Prometheus 和 Grafana 等流行的开源解决方案有所不同。
+
+- 身份验证、授权、审计（AAA）准则：根据公司标准，对于在 K8S 上运行的服务都必须有 AAA 保证，建议使用 [Envoy](https://www.envoyproxy.io) 作为服务网格在 Pinterest 建立 AAA。
+
+- 多种开发体验：我们寻求多样化开发体验，包括使用 Jupyter 的交互式选项以及基于 Dev 服务器的 CLI 访问，以满足开发人员的各种需求。
+
+- 成本优化和资源浪费：闲置的 Ray 集群会消耗大量开支。需要制定垃圾收集政策和成本属性，以提高团队意识，减少资源浪费。
+
+- 离线数据分析：优先将所有与 Ray 集群相关的指标导出为大数据格式（如 Hive、Parquet）以进行离线分析。这些数据将包括 GPU 利用率等指标，以确定需要改进的领域，并随着时间推移跟踪应用程序和基础设施的稳定性。
+
+##### 基于 Kubernetes
+
+由于 K8S API 访问权限限制，我们无法轻松的在环境中安装 KubeRay 以在 K8S 中运行 Ray 集群。此外，Pinterest K8S 集群内的 Secret 管理、流量处理和日志轮替等任务需要由不同团队管理的特定边车。为确保集中控制必要的边车更新（如修复错误或安装安全补丁），我们必须遵守某些限制。
+
+为了给 Ray 集群所需的基本组件（如 [Launching an On-Premise Cluster](https://docs.ray.io/en/latest/cluster/vms/user-guides/launching-clusters/on-premises.html) 中所述）构建原型，同时纳入所需辅助程序，我们选择使用 Pinterest 专用 CRD，它是建立在开源 Kubeflow PyTorchJob 基础上的封装程序。
+
+在最初的迭代中，我们的目标是通过在客户端构建 Ray head 和 Ray Worker 来保持简单化。这就需要对每个组件使用不同的命令，并为客户端执行定制脚本。
+
+```python
+def launch_ray_cluster(configs: RayClusterConfig) -> str:
+    # define resources, instance_type, command, envs_vars etc... 
+    configs = RayClusterAndJobConfigs()
+    with ThreadPoolExecutor() as executor:  
+        # Submit the functions to the executor  
+        ray_head = executor.submit(launch_ray_head(configs)).result()
+        ray_workers = executor.submit(launch_ray_workers(configs).result()
+    return check_up_and_running(ray_head, ray_workers)
+```
+
+该步骤还有很大改进空间。主要缺点是这种方法难以管理，因为客户端的执行可能会因各种原因（如网络错误或证书过期）而中断，导致 Ray 集群成为僵尸，从而浪费 K8S 上的资源。虽然这种方法足以让工程师玩转 Ray，但对于旨在高效管理 Ray 集群的平台来说，这种方法还远不够理想。
+
+##### API 网关和控制器
+
+在第二次迭代中，通过开发类似于 KubeRay 的控制器，从客户端管理 Ray 集群过渡到了服务端方法。解决方案需要在用户和 K8S 之间创建由多个组件组成的中间层，包括 API 服务器、Ray 集群/作业控制器和用于外部状态管理的 MySQL 数据库。
+
+![](https://image.deepnomind.com/blog/image/d062d5a3b581cf3c391e10a2f634884a)
+
+- API 服务器：该组件用于请求检查、身份验证和授权。它将 K8S 的复杂性从客户端抽象出来，使用户能与平台 API 接口进行交互，这对增强安全性（特别是后续将提到的 TLS）尤其有价值。
+
+- MySQL 数据库：存储与 Ray 集群相关的状态信息，允许在 K8S 重放必要的临时状态。此外，它还将 API 服务器和 Ray 集群控制器之间的数据流分离开来，其额外好处是便于将数据转储到 Hive 以进行离线分析。
+
+- Ray 集群控制器：该组件持续查询 K8S 以管理 Ray 集群生命周期，包括配置 Ray head 和 worker 节点、监控 Ray 集群状态，并根据需要执行清理操作。
+
+- Ray 作业控制器：与 Ray 集群控制器类似，主要负责管理 Ray 作业生命周期。作为提交 RayJobs 的主要实体，确保系统内正确的身份验证和授权协议。此外，该控制器还支持向同一个 Ray 集群提交多个 Ray 作业，使用户能够更高效的进行迭代，而无需为每次作业提交等待新的 Ray 集群配置。
+
+这种方法在用户和 Kubernetes 之间提供了宝贵的抽象层，使用户无需理解复杂的 Kubernetes 工件。相反，可以直接利用平台提供的面向用户的库，将繁重的配置步骤从客户端转移到 Kubernetes，从而精简流程、简化步骤、提升整体用户体验。
+
+![](https://image.deepnomind.com/blog/image/7e76001878290b36deff3e08fd501b96)
+
+在实施自定义控制器的过程中，我们确保了模块化，以便将来能够无缝过渡到 KubeRay。这种方法可以轻松替换用于启动 Ray 集群的方法，可以从内部 Kubernetes 原语轻松过渡到 KubeRay。
+
+```python
+Class Controller:
+    def reconcile(self, ray_cluster: RayClusterRecord):
+        # this part can be swap out from in-house primitive to KubeRay
+        status, k8s_meta = self.launch_and_monitor_ray_cluster(ray_cluster.configs)
+        db.update(ray_cluster, status=status, k8s_meta=k8s_meta)
+
+    def run(self):
+        while True:
+            ray_clusters = db.get_ray_cluster_to_dispatch()
+            for ray_cluster in ray_clusters:
+                self.reconcile(ray_cluster)
+            sleep(1)
+
+    def launch_and_monitor_ray_cluster(self, configs) -> Tuple[str, Dict]:
+        return get_actual_k8s_related_status(ray_identifier=configs.ray_identifier)
+```
+
+##### 可观测性
+
+考虑到 Ray 集群现有面板只有在集群处于活跃状态时才能访问，且不提供日志或指标回放功能，我们选择开发了一个集成了持久化日志和指标功能的专用用户界面。在之前构建的 API 网关的支持下，该用户界面可以实时获取 Ray 集群和作业的状态。由于所有元数据、事件和日志都存储在数据库或 S3 中，因此这种策略支持在没有活跃 Ray 集群的情况下进行日志分析，从而降低了与 GPU 等闲置资源相关的成本。
+
+![](https://image.deepnomind.com/blog/image/313e3924957b395b3720285be0f03dba)
+
+各家公司可能都有自己的时间序列指标解决方案。在 Pinterest，我们使用自己的内部时间序列数据库 [Goku](https://readmedium.com/goku-building-a-scalable-and-high-performant-time-series-database-system-a8ff5758a181)，它的 API 与 OpenTSDB 兼容。我们还运行了一个额外的边车，用于拉取 prometheus 指标并重新格式化，使其与我们的内部系统兼容。关于日志记录，我们按照 [Ray 的建议](https://docs.ray.io/en/latest/cluster/kubernetes/user-guides/logging.html#log-persistence)将日志持久化到 AWS S3，这些日志随后会被 API 服务器使用，并显示在我们的 Ray 集群 UI 上。
+
+![](https://image.deepnomind.com/blog/image/7fee4383d2a8bcc142867b67d491fac7)
+
+##### Ray 应用统计
+
+我们将相同的 grafana 图表转换成内部可视化工具 Statsboard。此外，还添加了更多针对特定应用的功能，如 dcgm GPU 指标和数据加载器指标，从而有助于 Pinterest 的 ML 工程师找出其 Ray 应用的瓶颈和问题。
+
+![](https://image.deepnomind.com/blog/image/60196cda902c6fc075a386d9871fd3c1)
+
+##### Ray 基础设施统计
+
+监控所有基础架构级指标对于实施有效监控、生成告警以及根据历史数据建立 SLO/SLA 基准至关重要。例如，跟踪端到端 Ray 集群等待时间和监控 Ray 作业的滚动成功率对于评估和维持系统性能至关重要。此外，识别可能导致 Ray 集群配置失败的任何平台错误对于保持运行效率也至关重要。
+
+![](https://image.deepnomind.com/blog/image/9b3e4ff59cc68083093ed58bb24d40bf)
+
+##### 开发及产品界面
+
+我们为开发 Ray 应用程序提供了三种选择，包括 Dev 服务器、Jupyter 以及 [Spinner](https://readmedium.com/spinner-pinterests-workflow-platform-c5bbe190ba5) 工作流，所有这些都由 ML 平台中的 RESTful API 提供支持。
+
+![](https://image.deepnomind.com/blog/image/8517229dc0d882deb9ad0e9f1d8cf0e7)
+
+![](https://image.deepnomind.com/blog/image/cc9f60a868cc0f77a7c436a99d70fb6e)
+
+我们基于 Airflow 的 [PythonOperator](https://airflow.apache.org/docs/apache-airflow/stable/howto/operator/python.html#pythonoperator) 构建定制 operator，用户可以通过该 operator 提交作业配置，而我们则将其转换为向 MLP 服务器发出的 RayJob 请求。
+
+![](https://image.deepnomind.com/blog/image/8ea7bb63aff4a2929e1fd1465837ba8f)
+
+##### 测试
+
+单元测试和集成测试
+
+我们为开发 Ray 应用程序的用户提供两种类型的测试：
+
+- 建议使用低级 Ray 内核或 Ray 数据库的平台库所有者使用单元测试，当然集成测试也可以。我们遵循 [Ray 程序测试建议](https://docs.ray.io/en/latest/ray-contribute/testing-tips.html)，并使用 pytest fixtures 在同一测试套件中尽可能复用 Ray 集群。
+
+- 集成测试适用于希望运行完整 Ray 作业的用户，以识别并解决代码更改或库更新可能导致的任何问题。我们还会定期运行集成测试，以监控对业务至关重要的 Ray 应用程序的健康状况。
+
+![](https://image.deepnomind.com/blog/image/bdbabeab1e3cdca488900025640e41dc)
+
+##### 网络和安全
+
+虽然 Ray 作为计算平台非常灵活，开发人员可以通过 API 轻松运行工作负载，但也导致了一个安全漏洞（[CVE-2023-48022](https://nvd.nist.gov/vuln/detail/CVE-2023-48022)），这篇[关于 Shadowray 的文章](https://www.oligo.security/blog/shadowray-attack-ai-workloads-actively-exploited-in-the-wild)提供了更多细节。问题在于，Ray 本身并没有提供良好的身份验证和授权方式，因此每个可以访问 Ray Dashboard API 的人都可以在没有任何验证或控制的情况下远程执行代码。
+
+我们认真对待并妥善解决了这个安全问题。我们确保在 Ray 集群上应用适当的身份验证和授权，因此如果用户没有正确的权限，就无法访问特定的 Ray 集群。
+
+然而，Pinterest 的 Kubernetes 联邦集群架构进一步加剧了这一问题的复杂性，这给将集群内功能应用到集群间环境带来了挑战。例如，我们无法使用网络策略（NetworkPolicy）来控制跨 K8S 集群的入口和出口流量，因此需要某种替代方案来实现网络隔离，尤其是当 Pod 可以分散在 K8S 集群上时，我们的目标是最大限度提高不同区域的硬件可用性。
+
+- HTTP：在 Pinterest，我们使用 Envoy 作为 Kubernetes 服务网格。我们将 Ray Dashboard 部署在 Envoy 后面的 localhost 上，并遵循 Pinterest 的标准身份验证和授权方式。这样，我们就能将 Ray Dashboard 的访问限制为用户界面的 OAuth 或服务的 mTLS。
+
+![](https://image.deepnomind.com/blog/image/12dfec671e70cf584b935ee8f7977516)
+
+- gRPC：为防止 K8S 环境中的任意 Pod 连接到活跃 Ray 集群，我们在 Ray 集群启动时利用 Ray TLS 进行了一些定制。具体来说，我们为每个 Ray 集群创建了一对唯一的 CA（私钥、证书）。这样就能确保 CA 和特定 Ray 群集之间有 1:1 的映射关系。相互验证的第一步是在服务端通过适当的 AuthN / AuthZ 限制客户端（Ray Pod）访问特定 CA，这样只有一部分 pod 能够收到由代表该特定 Ray 集群的 CA 签发的证书。第二步是当 pod 使用这些签发的证书进行通信时，检查它们是否由与预期 Ray 集群相对应的 CA 签发。此外，为 Ray pod 签发叶证书的所有加密操作都应在服务端（MLP 服务器）进行，以确保客户端（包括 Ray head 和 Worker pod）无法访问 CA 私钥。
+
+![](https://image.deepnomind.com/blog/image/e98f530fe221e6131770c6a3fe6d2856)
+
+##### 经验教训
+
+渐进式改进：
+
+- 首先以简单的方式部署 Ray 集群，然后重点关注在生产或云环境中自动化和扩展流程。
+
+- 在开发 MVP 时，利用公司内部现有基础设施，最大限度减少重新发明轮子的需要。对我们而言，就是利用 Kubeflow operator 和现有的 ML 特定基础架构逻辑来简化开发流程。
+
+- 原型完成后，根据公司的最佳实践，完善基础设施，如解决安全隐患和任何其他合规问题。
+
+- 与客户举行定期会议，及早收集有关挑战和改进的反馈意见。
+
+- 目前，Pinterest 的 Ray 计划取得了成功，我们正在寻求更多改进，比如在迁移到 ML 专用 K8S 集群时集成 KubeRay。
+
+客户端与 Kubernetes 集群之间的中间层：
+
+- API 服务器是客户端与 Kubernetes 之间的桥梁，提供了抽象层。
+
+- 即使自定义资源已从 Kubernetes 中移除，也要确保持续记录 Ray 集群的生命周期事件。
+
+- 平台有机会实施业务逻辑，如额外的验证和定制，包括身份验证、授权以及限制最终用户访问 Ray Dashboard API。
+
+- 通过解耦配置 Ray 集群的实际方法，可以更容易的根据需要切换到不同的节点供应商，尤其是在计划将来转向 KubeRay 以及专用 K8S 集群的时候。
+
+可见度：
+
+- 如果向用户提供的基础设施相关信息不足，可能会导致应用程序故障或 Ray 集群配置延迟方面的混乱。
+
+- 平台监控和告警对于同时运行数十或数百个 Ray 集群至关重要。我们仍处于 Ray 基础架构的早期阶段，快速变化可能会破坏应用程序，因此需要努力设置告警，并在部署到生产环境之前在预发环境中进行彻底测试。
+
+##### 使用方法
+
+我们从 2023 年第二季度开始收集 Ray 基础设施的使用情况，并在 2023 年第四季度观察到随着最后一英里数据处理应用 GA 和越来越多用户开始使用 Ray 框架来探索不同的 Ray 应用，如批量推理和临时 Ray 服务开发，Ray 基础设施的使用量激增。现在，我们正积极帮助用户将基于 PyTorch 的本地应用迁移到基于 Ray 的应用程序，以享受 Ray 带来的好处。
+
+![](https://image.deepnomind.com/blog/image/66eff4a92af27594a92cecfd8144c10e)
+
+![](https://image.deepnomind.com/blog/image/285b8b8d518b166cff3effb40ae3067b)
+
+![](https://image.deepnomind.com/blog/image/be8690e91e605d329d3384e7effa587a)
+
+##### 使用案例
+
+Ray 基础设施已部署用于生产型 ML 用例和新应用的快速实验。
+
+**Ray 训练**
+
+- 多个推荐系统模型训练已迁移到 Ray，我们正在积极加入其他用例
+
+- 目前，我们使用 Ray 每月提供 5000 多项训练工作
+
+- 这些训练利用了异构 CPU / GPU 集群
+
+**关键成就**
+
+**可扩展性**：
+
+- Ray 使我们的训练运行能够在训练器实例之外透明扩展数据加载和预处理。
+
+- 单个 GPU 节点（如 p4d.24xlarge 实例）的 CPU:GPU 比率为固定的 12:1，可以防止数据加载器扩大规模并使 GPU 饱和。
+
+- 有了 Ray，我们就可以在 p4d 实例之外，使用更便宜的 CPU 实例来扩展数据加载器了
+
+**开发速度**：
+
+- 除了可扩展性，Ray 还大大有助于加快开发速度。
+
+- ML 工程师日常工作的很大一部分是使用本地代码更改模型并提交开发训练运行
+
+- Ray 使用户能够交互式使用 Ray 计算集群，通过 Jupyter notebook 作为终端/界面提交作业
+
+**批量推理**
+
+- 过去，Pinterest 使用的是基于 PySpark 的批量推理解决方案。
+
+- 我们用 Ray 重新实现了新的 BatchInference 解决方案，设计为在 ray.data.Dataset 上实现 [map_batches](https://docs.ray.io/en/latest/data/api/doc/ray.data.Dataset.map_batches.html)。
+
+- 我们将该解决方案用于三种生产应用案例。
+
+- 目前每月通过 Ray 执行 300 多个批量推理任务。
+
+**关键成就**
+
+**效率**：
+
+- 与旧版本不同，Ray 允许对预处理、GPU 推理和输出文件进行流水线处理。
+
+- 此外，还能自动解耦这三个步骤，以便在异构 CPU 和 GPU 节点上运行。
+
+- 这样一来，我们的生产型 GPU 推理作业的运行时间缩短了 4 倍（1 小时 → 15 分钟）。
+
+**机遇**：
+
+- 使用 Ray 编程的简易性和流水线设计带来的高效性，使我们能够为基于 GPU 的模型采用特征消融工具。
+
+**实验性工作**
+
+- Ray 提供了包括 RayServe 在内的强大工具生态系统。
+
+- RayServe 为模型服务提供内置路由和自动缩放功能，这对快速设置模型进行评估非常方便。
+
+- 如果没有 RayServe，客户就必须手动设置 RPC 服务器、部署流水线、服务发现和自动扩展。
+
+**关键成就**
+
+- 在内部黑客马拉松活动中，团队可以在几小时内建立并使用开源大模型
+
+- 如果没有 Ray，建立这样的基础设施需要数天甚至数周时间
