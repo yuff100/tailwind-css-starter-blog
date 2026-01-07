@@ -1,0 +1,283 @@
+---
+title: 'AI 智能体高可靠设计模式：竞争代理组合'
+date: '2026-01-07'
+tags: ['人工智能','AI 智能体高可靠设计模式']
+draft: false
+summary: '本系列介绍增强现代智能体系统可靠性的设计模式，以直观方式逐一介绍每个概念，拆解其目的，然后实现简单可行的版本，演示其如何融入现实世界的智能体系统。本系列一共 14 篇文章，这是第 6 篇。'
+---
+
+>*本系列介绍增强现代智能体系统可靠性的设计模式，以直观方式逐一介绍每个概念，拆解其目的，然后实现简单可行的版本，演示其如何融入现实世界的智能体系统。本系列一共 14 篇文章，这是第 6 篇。原文：[Building the 14 Key Pillars of Agentic AI](https://levelup.gitconnected.com/building-the-14-key-pillars-of-agentic-ai-229e50f65986)*
+
+![](https://image.deepnomind.com/blog/image/48df0afb07ffc72fa1851b381f32a6bd)
+
+优化智能体解决方案需要软件工程确保组件协调、并行运行并与系统高效交互。例如[预测执行](https://en.wikipedia.org/wiki/Speculative_execution)，会尝试处理可预测查询以**降低延迟**，或者进行[冗余执行](https://developer.arm.com/community/arm-community-blogs/b/embedded-and-microcontrollers-blog/posts/comparing-lock-step-redundant-execution-versus-split-lock-technologies)，即**对同一智能体重复执行多次**以防单点故障。其他增强现代智能体系统可靠性的模式包括：
+
+- **并行工具**：智能体同时执行独立 API 调用以隐藏 I/O 延迟。
+- **层级智能体**：管理者将任务拆分为由执行智能体处理的小步骤。
+- **竞争性智能体组合**：多个智能体提出答案，系统选出最佳。
+- **冗余执行**：即两个或多个智能体解决同一任务以检测错误并提高可靠性。
+- **并行检索和混合检索**：多种检索策略协同运行以提升上下文质量。
+- **多跳检索**：智能体通过迭代检索步骤收集更深入、更相关的信息。
+
+还有很多其他模式。
+
+本系列将实现最常用智能体模式背后的基础概念，以直观方式逐一介绍每个概念，拆解其目的，然后实现简单可行的版本，演示其如何融入现实世界的智能体系统。
+
+所有理论和代码都在 GitHub 仓库里：[🤖 Agentic Parallelism: A Practical Guide 🚀](https://github.com/FareedKhan-dev/agentic-parallelism)
+
+代码库组织如下：
+
+```
+agentic-parallelism/
+    ├── 01_parallel_tool_use.ipynb
+    ├── 02_parallel_hypothesis.ipynb
+    ...
+    ├── 06_competitive_agent_ensembles.ipynb
+    ├── 07_agent_assembly_line.ipynb
+    ├── 08_decentralized_blackboard.ipynb
+    ...
+    ├── 13_parallel_context_preprocessing.ipynb
+    └── 14_parallel_multi_hop_retrieval.ipynb
+```
+
+---
+
+# 竞争代理组合
+
+在智能体解决方案中，每个 AI 智能体都有其特定偏见、优势和劣势。
+
+使用多样化代理组合可以降低单一代理产生次优或缺陷输出的风险。
+
+通过结合多模型或提示策略，系统更具韧性，避免单点故障，更有可能产出高质量输出。
+
+这种模式相当于人工智能寻求 “第二意见” 或进行竞争性设计流程。
+
+我们将构建三个风格迥异的文案代理组合，负责撰写产品描述，然后看看评估器如何基于这些代理的输出进行推理，选择最佳方案，从而显著提升质量控制流程。
+
+首先，组合的力量来自其成员的多样性。我们将利用两个不同的 LLM 家族创建三种不同的文案“角色”，以最大化多样性。
+
+```python
+from langchain_huggingface import HuggingFacePipeline
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from langchain_google_vertexai import ChatVertexAI
+import torch
+
+# LLM 1: Llama 3 8B Instruct (开源, 通过 Hugging Face 本地部署)
+# 为两个角色赋能
+model_id = "meta-llama/Meta-Llama-3-8B-Instruct"
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+hf_model = AutoModelForCausalLM.from_pretrained(
+    model_id,
+    torch_dtype=torch.bfloat16,
+    device_map="auto",
+    load_in_4bit=True
+)
+pipe = pipeline("text-generation", model=hf_model, tokenizer=tokenizer, max_new_tokens=1024, do_sample=True, temperature=0.7, top_p=0.9)
+llama3_llm = HuggingFacePipeline(pipeline=pipe)
+
+# LLM 2: Claude 3.5 Sonnet on Vertex AI (专有, 基于云服务)
+# 使用来自不同厂商的模型和训练方法引入了显著的多样性
+claude_sonnet_llm = ChatVertexAI(model_name="claude-3-5-sonnet@001", temperature=0.7)
+print("LLMs Initialized: Llama 3 and Claude 3.5 Sonnet are ready to compete.")
+```
+
+通过使用两个完全不同的模型 —— 开源的 Llama 3 和谷歌的 Claude 3.5 Sonnet，确保组合拥有真正的多样性。这些代理拥有不同写作风格、知识门槛和固有偏见，而这正是我们想要的强有力竞争过程。
+
+接下来定义 Pydantic 模型，以结构化文案代理和最终评估器的产出。
+
+```python
+from langchain_core.pydantic_v1 import BaseModel, Field
+from typing import List
+
+class ProductDescription(BaseModel):
+    """有标题和正文的结构化产品描述，是文案代理的输出"""
+    headline: str = Field(description="A catchy, attention-grabbing headline for the product.")
+    body: str = Field(description="A short paragraph (2-3 sentences) detailing the product's benefits and features.")
+
+class FinalEvaluation(BaseModel):
+    """评估器代理的结构化输出，包含最佳描述和详细评论"""
+    best_description: ProductDescription = Field(description="The winning product description chosen by the judge.")
+    critique: str = Field(description="A detailed, point-by-point critique explaining why the winner was chosen over the other options, referencing the evaluation criteria.")
+    winning_agent: str = Field(description="The name of the agent that produced the winning description (e.g., 'Claude_Sonnet_Creative', 'Llama3_Direct', 'Llama3_Luxury').")
+```
+
+这些数据模型就是通信协议。
+
+1. `ProductDescription` 模版确保三家竞争者以相同且一致的格式提交输出。
+2. `FinalEvaluation` 模版更为关键，迫使评估器代理不仅要选择一个 `winning_agent`，还要提供详细评审（`critique`），使决策过程透明且可审计。
+
+现在定义 `GraphState` 和代理节点。节点将通过辅助功能创建，以减少重复代码。
+
+```python
+from typing import TypedDict, Annotated, Dict
+import operator
+import time
+
+class GraphState(TypedDict):
+    product_name: str
+    product_category: str
+    features: str
+    # 字典存储来自竞争代理的结果，并通过 operator.update 合并
+    competitor_results: Annotated[Dict[str, ProductDescription], operator.update]
+    final_evaluation: FinalEvaluation
+    performance_log: Annotated[List[str], operator.add]
+
+# 创建竞争节点的辅助“工厂”函数
+def create_competitor_node(agent_name: str, llm, prompt):
+    # 每个竞争者都是一条链：提示词 -> LLM -> Pydantic 结构化输出
+    chain = prompt | llm.with_structured_output(ProductDescription)
+    def competitor_node(state: GraphState):
+        print(f"--- [COMPETITOR: {agent_name}] Starting generation... ---")
+        start_time = time.time()
+        result = chain.invoke({
+            "product_name": state['product_name'],
+            "product_category": state['product_category'],
+            "features": state['features']
+        })
+        execution_time = time.time() - start_time
+        log = f"[{agent_name}] Completed in {execution_time:.2f}s."
+        print(log)
+        # 输出键与代理名称匹配，以便于聚合
+        return {"competitor_results": {agent_name: result}, "performance_log": [log]}
+    return competitor_node
+```
+
+`create_competitor_node` 是构建多元化组合的最简单方式，输入名称、LLM 和提示符，返回一个完备的、支持结构化输出的 `LangGraph` 节点。让我们能够轻松定义三位竞争对手，让每个都有独特的模型和个性。
+
+现在创建三个竞争节点和最终评估器节点。
+
+```python
+# 使用工厂创建三个竞争节点
+# 每个都有不同的模型和提示词组合，以确保多样性
+claude_creative_node = create_competitor_node("Claude_Sonnet_Creative", claude_sonnet_llm, claude_creative_prompt)
+llama3_direct_node = create_competitor_node("Llama3_Direct", llama3_llm, llama3_direct_prompt)
+llama3_luxury_node = create_competitor_node("Llama3_Luxury", llama3_llm, llama3_luxury_prompt)
+
+# 评估器节点
+def judge_node(state: GraphState):
+    """评估所有竞争者的结果并选出获胜者"""
+    print("--- [JUDGE] Evaluating competing descriptions... ---")
+    start_time = time.time()
+    
+    # 根据评估器提示，将不同描述格式化
+    descriptions_to_evaluate = ""
+    for name, desc in state['competitor_results'].items():
+        descriptions_to_evaluate += f"--- Option from {name} ---\nHeadline: {desc.headline}\nBody: {desc.body}\n\n"
+    
+    # 创建评估链
+    judge_chain = judge_prompt | llm.with_structured_output(FinalEvaluation)
+    evaluation = judge_chain.invoke({
+        "product_name": state['product_name'],
+        "descriptions_to_evaluate": descriptions_to_evaluate
+    })
+    
+    execution_time = time.time() - start_time
+    log = f"[Judge] Completed evaluation in {execution_time:.2f}s."
+    print(log)
+    
+    return {"final_evaluation": evaluation, "performance_log": [log]}
+```
+
+现在确定了组合里的三个代理，有三个不同的文案节点，每个节点都针对不同风格设计，还有一个评估节点负责根据收集到的输出进行最终关键评估。
+
+最后用“扇出扇入”架构组装图。
+
+```python
+from langgraph.graph import StateGraph, END
+
+workflow = StateGraph(GraphState)
+
+# 添加三个竞争节点
+workflow.add_node("claude_creative", claude_creative_node)
+workflow.add_node("llama3_direct", llama3_direct_node)
+workflow.add_node("llama3_luxury", llama3_luxury_node)
+
+# 添加最终评估节点
+workflow.add_node("judge", judge_node)
+
+# 入口点是节点列表，告诉 LangGraph 并行运行这些节点
+workflow.set_entry_point(["claude_creative", "llama3_direct", "llama3_luxury"])
+
+# 列表中的边意味着图在继续之前会等待所有边完成，这就是扇入
+workflow.add_edge(["claude_creative", "llama3_direct", "llama3_luxury"], "judge")
+
+# 最后一步是评估器决策
+workflow.add_edge("judge", END)
+app = workflow.compile()
+```
+
+![组合代理](https://image.deepnomind.com/blog/image/6bb5e92f91fa3ab864337f9fa99d15bf)
+
+现在进行最后的一对一分析，审视这三种竞争性描述及评估器的最终决定，以理解该组合的好处。
+
+```python
+import json
+
+print("="*60)
+print("            THE COMPETING PRODUCT DESCRIPTIONS")
+print("="*60)
+
+
+for name, desc in final_state['competitor_results'].items():
+    print(f"\n--- [{name}] ---")
+    print(f"Headline: {desc['headline']}")
+    print(f"Body: {desc['body']}")
+print("\n" + "="*60)
+print("                  THE JUDGE'S FINAL VERDICT")
+print("="*60)
+final_eval = final_state['final_evaluation']
+print(f"\nWinning Agent: {final_eval['winning_agent']}\n")
+print("Winning Description:")
+print(f"  - Headline: {final_eval['best_description']['headline']}")
+print(f"  - Body: {final_eval['best_description']['body']}\n")
+print("Judge's Critique:")
+print(final_eval['critique'])
+print("\n" + "-"*60)
+print("                      PERFORMANCE ANALYSIS")
+print("-"*60)
+
+
+competitor_times = [7.33, 6.12, 6.45]
+judge_time = 8.91
+parallel_time = max(competitor_times)
+sequential_time = sum(competitor_times)
+total_time = parallel_time + judge_time
+print(f"\nTotal Execution Time: {total_time:.2f} seconds\n")
+```
+
+输出：
+
+```python
+#### 输出 ####
+============================================================
+            THE COMPETING PRODUCT DESCRIPTIONS
+============================================================
+
+--- [Claude_Sonnet_Creative] ---
+Headline: Your Life, Unlocked. Your Wellness, Understood.
+Body: The Aura Smart Ring is more than a tracker; its your silent wellness partner. Crafted from durable titanium, it deciphers your body signals-sleep, activity, and heart rate-translating them into insights that empower your every day. With a 7-day battery, its always on, always learning, always you.
+--- [Llama3_Direct] ---
+Headline: Track Everything. Wear Nothing.
+Body: Meet the Aura Smart Ring. Get elite sleep and activity tracking, 24/7 heart rate monitoring, and a 7-day battery. Built from tough titanium, it delivers powerful health insights without the bulk of a watch.
+--- [Llama3_Luxury] ---
+Headline: Master Your Narrative.
+Body: For the discerning individual, the Aura Smart Ring is an emblem of effortle...ously engineered from aerospace-grade titanium, it provides a seamless interface to your personal biometrics. Command your well-being with seven days of uninterrupted power and unparalleled insight.
+
+============================================================
+                  THE JUDGES FINAL VERDICT
+============================================================
+Winning Agent: Claude_Sonnet_Creative
+Winning Description:
+  - Headline: Your Life, Unlocked. Your Wellness, Understood.
+  - Body: The Aura Smart Ring is more than a tracker; its your silent wellness partner. Crafted from durable titanium, it deciphers your body's signals-sleep, activity, and heart rate-translating them into insights that empower your every day. With a 7-day battery, it's always on, always learning, always you.
+
+------------------------------------------------------------
+                      PERFORMANCE ANALYSIS
+------------------------------------------------------------
+Total Execution Time: 16.24 seconds
+```
+
+最终分析强调了竞争组合模式的两个关键优势。
+
+1. **通过多样性+评估器实现高质量**：三个代理产生了明显不同的输出 Llama3_Direct（有力）、Llama3_Luxury（理想）和 Claude_Sonnet_Creative（利益驱动）。这种多样性为评估器代理提供了更强有力的评估工具。其最终选择体现了对权衡的明确推理，表明质量来自过程（竞争+评估），而非单一模型。
+2. **通过并行性实现高性能**：所有代理并行运行使流水线速度比顺序执行快了 63%，仅以最慢代理的时间开销，就获得了多样化输出，带来更高的质量和更高的运行效率。
