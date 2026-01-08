@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { slug } from 'github-slugger'
 import { formatDate } from 'pliny/utils/formatDate'
@@ -31,12 +32,70 @@ function Pagination({ totalPages, currentPage }: PaginationProps) {
     .replace(/\/$/, '') // Remove trailing slash
   const prevPage = currentPage - 1 > 0
   const nextPage = currentPage + 1 <= totalPages
+  const [jumpToPage, setJumpToPage] = useState('')
+
+  const handleJumpToPage = () => {
+    const pageNum = parseInt(jumpToPage, 10)
+    if (pageNum >= 1 && pageNum <= totalPages) {
+      const targetUrl = pageNum === 1 ? `/${basePath}/` : `/${basePath}/page/${pageNum}`
+      window.location.href = targetUrl
+    }
+  }
+
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleJumpToPage()
+    }
+  }
+
+  // 生成页码数组
+  const getPageNumbers = () => {
+    const pages: (number | string)[] = []
+    const maxVisible = 7 // 最多显示的页码数量
+
+    if (totalPages <= maxVisible) {
+      // 如果总页数少于最大显示数，显示所有页码
+      for (let i = 1; i <= totalPages; i++) {
+        pages.push(i)
+      }
+    } else {
+      // 总是显示第一页
+      pages.push(1)
+
+      if (currentPage <= 3) {
+        // 当前页在前面
+        for (let i = 2; i <= 4; i++) {
+          pages.push(i)
+        }
+        pages.push('...')
+        pages.push(totalPages)
+      } else if (currentPage >= totalPages - 2) {
+        // 当前页在后面
+        pages.push('...')
+        for (let i = totalPages - 3; i <= totalPages; i++) {
+          pages.push(i)
+        }
+      } else {
+        // 当前页在中间
+        pages.push('...')
+        for (let i = currentPage - 1; i <= currentPage + 1; i++) {
+          pages.push(i)
+        }
+        pages.push('...')
+        pages.push(totalPages)
+      }
+    }
+
+    return pages
+  }
+
+  const pageNumbers = getPageNumbers()
 
   return (
     <div className="space-y-2 pt-6 pb-8 md:space-y-5">
-      <nav className="flex justify-between">
+      <nav className="flex justify-center items-center gap-2">
         {!prevPage && (
-          <button className="cursor-auto disabled:opacity-50" disabled={!prevPage}>
+          <button className="cursor-auto disabled:opacity-50 px-3 py-1" disabled={!prevPage}>
             上一页
           </button>
         )}
@@ -44,23 +103,77 @@ function Pagination({ totalPages, currentPage }: PaginationProps) {
           <Link
             href={currentPage - 1 === 1 ? `/${basePath}/` : `/${basePath}/page/${currentPage - 1}`}
             rel="prev"
+            className="px-3 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
           >
             上一页
           </Link>
         )}
-        <span>
-          {currentPage} of {totalPages}
-        </span>
+
+        {/* 页码数字 */}
+        <div className="flex items-center gap-1">
+          {pageNumbers.map((pageNum, index) => {
+            if (pageNum === '...') {
+              return (
+                <span key={`ellipsis-${index}`} className="px-2 py-1">
+                  ...
+                </span>
+              )
+            }
+
+            const isCurrentPage = pageNum === currentPage
+            const pageNumber = pageNum as number
+
+            return (
+              <Link
+                key={pageNumber}
+                href={pageNumber === 1 ? `/${basePath}/` : `/${basePath}/page/${pageNumber}`}
+                className={`px-3 py-1 rounded ${
+                  isCurrentPage
+                    ? 'bg-primary-500 text-white font-bold'
+                    : 'hover:bg-gray-200 dark:hover:bg-gray-700'
+                }`}
+              >
+                {pageNumber}
+              </Link>
+            )
+          })}
+        </div>
+
         {!nextPage && (
-          <button className="cursor-auto disabled:opacity-50" disabled={!nextPage}>
+          <button className="cursor-auto disabled:opacity-50 px-3 py-1" disabled={!nextPage}>
             下一页
           </button>
         )}
         {nextPage && (
-          <Link href={`/${basePath}/page/${currentPage + 1}`} rel="next">
+          <Link
+            href={`/${basePath}/page/${currentPage + 1}`}
+            rel="next"
+            className="px-3 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+          >
             下一页
           </Link>
         )}
+
+        {/* 跳转到指定页 */}
+        <div className="flex items-center gap-2 ml-4">
+          <span className="text-sm text-gray-600 dark:text-gray-400">跳转到</span>
+          <input
+            type="number"
+            min="1"
+            max={totalPages}
+            value={jumpToPage}
+            onChange={(e) => setJumpToPage(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder="页码"
+            className="w-16 px-2 py-1 text-center border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+          />
+          <button
+            onClick={handleJumpToPage}
+            className="px-3 py-1 rounded bg-primary-500 text-white hover:bg-primary-600"
+          >
+            跳转
+          </button>
+        </div>
       </nav>
     </div>
   )
