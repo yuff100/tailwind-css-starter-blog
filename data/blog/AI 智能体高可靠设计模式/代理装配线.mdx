@@ -1,0 +1,308 @@
+---
+title: 'AI 智能体高可靠设计模式：代理装配线'
+date: '2026-01-08'
+tags: ['人工智能','AI 智能体高可靠设计模式']
+draft: false
+summary: '本系列介绍增强现代智能体系统可靠性的设计模式，以直观方式逐一介绍每个概念，拆解其目的，然后实现简单可行的版本，演示其如何融入现实世界的智能体系统。本系列一共 14 篇文章，这是第 7 篇。'
+---
+
+>*本系列介绍增强现代智能体系统可靠性的设计模式，以直观方式逐一介绍每个概念，拆解其目的，然后实现简单可行的版本，演示其如何融入现实世界的智能体系统。本系列一共 14 篇文章，这是第 7 篇。原文：[Building the 14 Key Pillars of Agentic AI](https://levelup.gitconnected.com/building-the-14-key-pillars-of-agentic-ai-229e50f65986)*
+
+![](https://image.deepnomind.com/blog/image/48df0afb07ffc72fa1851b381f32a6bd)
+
+优化智能体解决方案需要软件工程确保组件协调、并行运行并与系统高效交互。例如[预测执行](https://en.wikipedia.org/wiki/Speculative_execution)，会尝试处理可预测查询以**降低时延**，或者进行[冗余执行](https://developer.arm.com/community/arm-community-blogs/b/embedded-and-microcontrollers-blog/posts/comparing-lock-step-redundant-execution-versus-split-lock-technologies)，即**对同一智能体重复执行多次**以防单点故障。其他增强现代智能体系统可靠性的模式包括：
+
+- **并行工具**：智能体同时执行独立 API 调用以隐藏 I/O 时延。
+- **层级智能体**：管理者将任务拆分为由执行智能体处理的小步骤。
+- **竞争性智能体组合**：多个智能体提出答案，系统选出最佳。
+- **冗余执行**：即两个或多个智能体解决同一任务以检测错误并提高可靠性。
+- **并行检索和混合检索**：多种检索策略协同运行以提升上下文质量。
+- **多跳检索**：智能体通过迭代检索步骤收集更深入、更相关的信息。
+
+还有很多其他模式。
+
+本系列将实现最常用智能体模式背后的基础概念，以直观方式逐一介绍每个概念，拆解其目的，然后实现简单可行的版本，演示其如何融入现实世界的智能体系统。
+
+所有理论和代码都在 GitHub 仓库里：[🤖 Agentic Parallelism: A Practical Guide 🚀](https://github.com/FareedKhan-dev/agentic-parallelism)
+
+代码库组织如下：
+
+```
+agentic-parallelism/
+    ├── 01_parallel_tool_use.ipynb
+    ├── 02_parallel_hypothesis.ipynb
+    ...
+    ├── 06_competitive_agent_ensembles.ipynb
+    ├── 07_agent_assembly_line.ipynb
+    ├── 08_decentralized_blackboard.ipynb
+    ...
+    ├── 13_parallel_context_preprocessing.ipynb
+    └── 14_parallel_multi_hop_retrieval.ipynb
+```
+
+---
+
+# 支持大吞吐量的代理装配线
+
+到目前为止，我们探索的并行模式（例如并行调用工具、假设生成和评估）都专注于减少单个复杂任务的时延，使代理对于单个用户查询更快、更智能。
+
+但如果挑战不是一项任务的复杂性，而是一系列数量庞大的连续任务，该怎么办？
+
+对于许多生产应用来说，最关键指标不是单次处理的速度，而是每小时可以处理多少。
+
+![代理装配线](https://image.deepnomind.com/blog/image/de713e6ea375054c9b2ee915cfa68bdb)
+
+这就是 **代理装配线（Agent Assembly Line）** 架构之所以重要的原因，这种模式将重点从最小化时延转移到最大化吞吐量。
+
+不需要一个代理从头到尾逐一处理，而是将流程分解为一系列处理专门工作的工作站。一旦某一工作站完成，就将项目传递给下一站。所有工作站并行工作，处理流中的不同项目。
+
+我们将建立一个三阶段流水线来处理一批产品评论，目标是通过仔细的时序分析来证明，与传统顺序方法相比，这种并行流水线可以显着增加每秒处理的评论数量。
+
+首先定义代表评论的数据结构，该结构可以在装配线上移动，每个工作站都会逐渐丰富其内容。
+
+```python
+from langchain_core.pydantic_v1 import BaseModel, Field
+from typing import List, Literal, Optional
+
+
+class TriageResult(BaseModel):
+    """初始分流站的结构化输出"""
+    category: Literal["Feedback", "Bug Report", "Support Request", "Irrelevant"] = Field(description="The category of the review.")
+
+class Summary(BaseModel):
+    """摘要站的结构化输出"""
+    summary: str = Field(description="A one-sentence summary of the key feedback in the review.")
+
+class ExtractedData(BaseModel):
+    """数据提取站的结构化输出"""
+    product_mentioned: str = Field(description="The specific product the review is about.")
+    sentiment: Literal["Positive", "Negative", "Neutral"] = Field(description="The overall sentiment of the review.")
+    key_feature: str = Field(description="The main feature or aspect discussed in the review.")
+
+class ProcessedReview(BaseModel):
+    """累积所有站点数据的最终的、经过完全处理的评论对象"""
+    original_review: str
+    category: str
+    summary: Optional[str] = None
+    extracted_data: Optional[ExtractedData] = None
+```
+
+这些 Pydantic 模版是装配线的“标准化运输集装箱”，`ProcessedReview` 对象是中央数据载体,在第一个站（`Triage`）创建，然后随着移动到后续站（`summary`、`extracted_data`）而逐渐丰富，确保流水线每个阶段的数据契约一致。
+
+接下来定义 `GraphState`，对一批评论进行操作。
+
+```python
+from typing import TypedDict, Annotated, List
+import operator
+
+class PipelineState(TypedDict):
+    # 'initial_reviews' 保存传入的原始评论字符串
+    initial_reviews: List[str]
+    # 'processed_reviews' 是ProcessedReview对象列表，这些对象是在通过流水线移动时构建的
+    processed_reviews: List[ProcessedReview]
+    performance_log: Annotated[List[str], operator.add]
+```
+
+`PipelineState` 是为批处理而设计的，整个装配线将使用 `initial_reviews` 列表调用一次，其最终输出将是完整的 `processed_reviews` 列表。
+
+现在，为装配线上的每个工作站定义节点，关键实现细节是每个节点使用 `ThreadPoolExecutor` 来并行处理分配给其阶段的所有项目。
+
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from tqdm import tqdm
+
+MAX_WORKERS = 4 # 控制每个工作站的并行度
+
+# 工作站 1: 分流节点
+def triage_node(state: PipelineState):
+    """第 1 站：并行的对所有初始评论进行分类"""
+    print(f"--- [Station 1: Triage] Processing {len(state['initial_reviews'])} reviews... ---")
+    start_time = time.time()
+    
+    triaged_reviews = []
+    # 用 ThreadPoolExecutor 对每个评论进行并行 LLM 调用
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        # We create a future for each review to be triaged.
+        future_to_review = {executor.submit(triage_chain.invoke, {"review_text": review}): review for review in state['initial_reviews']}
+        for future in tqdm(as_completed(future_to_review), total=len(state['initial_reviews']), desc="Triage Progress"):
+            original_review = future_to_review[future]
+            try:
+                result = future.result()
+                # 创建初始 ProcessedReview 对象
+                triaged_reviews.append(ProcessedReview(original_review=original_review, category=result.category))
+            except Exception as exc:
+                print(f'Review generated an exception: {exc}')
+    
+    execution_time = time.time() - start_time
+    log = f"[Triage] Processed {len(state['initial_reviews'])} reviews in {execution_time:.2f}s."
+    print(log)
+    
+    # 该节点的输出是已处理评论的初始列表
+    return {"processed_reviews": triaged_reviews, "performance_log": [log]}
+```
+
+`triage_node` 是装配线入口，关键设计点是使用 `ThreadPoolExecutor`。
+
+`triage_node` 一次性将所有评论提交给 `triage_chain`，然后 `as_completed` 迭代器在完成时生成结果，使我们能够高效构建 `triaged_reviews` 列表，确保该站点的耗时由最慢的几个 LLM 调用决定，而不是所有调用的总和。
+
+后续节点 `summarize_node` 和 `extract_data_node` 遵循相同的并行处理模式，首先筛选出自己负责的项目，然后并行处理。
+
+```python
+# 工作站 2: 总结节点
+def summarize_node(state: PipelineState):
+    """第 2 站：过滤反馈评论并并行总结"""
+    # 本站只提供“反馈”类评论
+    feedback_reviews = [r for r in state['processed_reviews'] if r.category == "Feedback"]
+    if not feedback_reviews:
+        print("--- [Station 2: Summarizer] No feedback reviews to process. Skipping. ---")
+        return {}
+    
+    print(f"--- [Station 2: Summarizer] Processing {len(feedback_reviews)} feedback reviews... ---")
+    start_time = time.time()
+    
+    # 用 map 来方便的更新评论
+    review_map = {r.original_review: r for r in state['processed_reviews']}
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_to_review = {executor.submit(summarizer_chain.invoke, {"review_text": r.original_review}): r for r in feedback_reviews}
+        for future in tqdm(as_completed(future_to_review), total=len(feedback_reviews), desc="Summarizer Progress"):
+            original_review_obj = future_to_review[future]
+            try:
+                result = future.result()
+                # 在 map 中找到原始评论对象，并用摘要来充实
+                review_map[original_review_obj.original_review].summary = result.summary
+            except Exception as exc:
+                print(f'Review generated an exception: {exc}')
+    
+    execution_time = time.time() - start_time
+    log = f"[Summarizer] Processed {len(feedback_reviews)} reviews in {execution_time:.2f}s."
+    print(log)
+    
+    # 返回完整的、更新的评论列表
+    return {"processed_reviews": list(review_map.values()), "performance_log": [log]}
+```
+
+```python
+# 工作站 3: 数据提取节点
+def extract_data_node(state: PipelineState):
+    """最后一站：并行的从总结评论中提取结构化数据"""
+    # 这个站点只操作带摘要的评论
+    summarized_reviews = [r for r in state['processed_reviews'] if r.summary is not None]
+    if not summarized_reviews:
+        print("--- [Station 3: Extractor] No summarized reviews to process. Skipping. ---")
+        return {}
+        
+    print(f"--- [Station 3: Extractor] Processing {len(summarized_reviews)} summarized reviews... ---")
+    start_time = time.time()
+    
+    review_map = {r.original_review: r for r in state['processed_reviews']}
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_to_review = {executor.submit(extractor_chain.invoke, {"summary_text": r.summary}): r for r in summarized_reviews}
+        for future in tqdm(as_completed(future_to_review), total=len(summarized_reviews), desc="Extractor Progress"):
+            original_review_obj = future_to_review[future]
+            try:
+                result = future.result()
+                # 最后一次用提取的数据丰富评论对象
+                review_map[original_review_obj.original_review].extracted_data = result
+            except Exception as exc:
+                print(f'Review generated an exception: {exc}')
+    
+    execution_time = time.time() - start_time
+    log = f"[Extractor] Processed {len(summarized_reviews)} reviews in {execution_time:.2f}s."
+    print(log)
+    
+    return {"processed_reviews": list(review_map.values()), "performance_log": [log]}
+```
+
+这些节点包含装配线过滤逻辑，`summarize_node` 并不处理所有评论，只从流水线上拉取"反馈"项，`extract_data_node` 只处理那些已经被成功总结的项，专业化是该模式的关键特性。
+
+接下来可以组装线性图……
+
+```python
+from langgraph.graph import StateGraph, END
+
+# 初始化图
+workflow = StateGraph(PipelineState)
+
+# 将三个工作站添加为节点
+workflow.add_node("triage", triage_node)
+workflow.add_node("summarize", summarize_node)
+workflow.add_node("extract_data", extract_data_node)
+
+# 定义装配线的线性流
+workflow.set_entry_point("triage")
+workflow.add_edge("triage", "summarize")
+workflow.add_edge("summarize", "extract_data")
+workflow.add_edge("extract_data", END)
+
+# 编译图
+app = workflow.compile()
+```
+
+![装配线](https://image.deepnomind.com/blog/image/42611982b7f77bd1ec0ecbf7f6042ad7)
+
+现在进行最终关键分析，比较装配线与模拟单一代理处理评论的性能，以量化吞吐量的巨大提升。
+
+```python
+# 流水线工作流程的总时间是每个阶段处理整个批的时间总和
+pipelined_total_time = triage_time + summarize_time + extract_time
+
+# 吞吐量是处理的总件数除以总时间
+pipelined_throughput = num_reviews / pipelined_total_time
+
+# 现在模拟顺序的单一代理
+# 首先，估算一次评论通过一个阶段所需的平均时间
+avg_time_per_stage_per_review = (triage_time + summarize_time + extract_time) / num_reviews
+
+# 单个评论从开始到结束的总时延是三个阶段的时间总和
+total_latency_per_review = avg_time_per_stage_per_review * 3
+
+# 顺序代理处理 10 条评论的总时间是 1 条评论时延的 10 倍
+sequential_total_time = total_latency_per_review * num_reviews
+sequential_throughput = num_reviews / sequential_total_time
+
+# 计算吞吐量增加百分比
+throughput_increase = ((pipelined_throughput - sequential_throughput) / sequential_throughput) * 100
+
+print("="*60)
+print("                      PERFORMANCE ANALYSIS")
+print("="*60)
+print("\n--- Assembly Line (Pipelined) Workflow ---")
+print(f"Total Time to Process {num_reviews} Reviews: {pipelined_total_time:.2f} seconds")
+print(f"Calculated Throughput: {pipelined_throughput:.2f} reviews/second\n")
+print("--- Monolithic (Sequential) Workflow (Simulated) ---")
+print(f"Avg. Latency For One Review to Complete All Stages: {total_latency_per_review:.2f} seconds")
+print(f"Simulated Total Time to Process {num_reviews} Reviews: {sequential_total_time:.2f} seconds")
+print(f"Simulated Throughput: {sequential_throughput:.2f} reviews/second\n")
+print("="*60)
+print("                        CONCLUSION")
+print("="*60)
+print(f"Throughput Increase: {throughput_increase:.0f}%")
+```
+
+```python
+#### 输出 ####
+============================================================
+                      PERFORMANCE ANALYSIS
+============================================================
+
+--- Assembly Line (Pipelined) Workflow ---
+Total Time to Process 10 Reviews: 20.40 seconds
+Calculated Throughput: 0.49 reviews/second
+
+--- Monolithic (Sequential) Workflow (Simulated) ---
+Avg. Latency For One Review to Complete All Stages: 6.12 seconds
+Simulated Total Time to Process 10 Reviews: 61.20 seconds
+Simulated Throughput: 0.16 reviews/second
+
+============================================================
+                        CONCLUSION
+============================================================
+Throughput Increase: 206%
+```
+
+分析清楚表明，装配线模式具有强大的能力。虽然从开始到结束处理单个评论的时间（时延）约为 6s ，但流水线系统在 20 多秒内就处理了全部 10 批数据。
+
+而传统的单一代理逐一处理，将需要超过 60s。装配线的吞吐量是其三倍，这是因为当提取器处理第一份评论时，总结器正在处理第二份，而分发器代理已经处理第三份了。
+
+这种并行、流水线的执行是构建具有 AI 代理的高吞吐量数据处理系统的关键。
