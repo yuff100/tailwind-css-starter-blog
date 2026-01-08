@@ -92,7 +92,7 @@ function Pagination({ totalPages, currentPage }: PaginationProps) {
   const pageNumbers = getPageNumbers()
 
   return (
-    <div className="space-y-2 pb-8 pt-6 md:space-y-5">
+    <div className="space-y-2 pt-6 pb-8 md:space-y-5">
       <nav className="flex items-center justify-center gap-2">
         {!prevPage && (
           <button className="px-3 py-1 disabled:opacity-50" disabled={!prevPage}>
@@ -169,7 +169,7 @@ function Pagination({ totalPages, currentPage }: PaginationProps) {
           />
           <button
             onClick={handleJumpToPage}
-            className="rounded bg-primary-500 px-3 py-1 text-white hover:bg-primary-600"
+            className="bg-primary-500 hover:bg-primary-600 rounded px-3 py-1 text-white"
           >
             跳转
           </button>
