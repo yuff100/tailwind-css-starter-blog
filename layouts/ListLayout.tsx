@@ -90,10 +90,10 @@ function Pagination({ totalPages, currentPage }: PaginationProps) {
   const pageNumbers = getPageNumbers()
 
   return (
-    <div className="space-y-2 pt-6 pb-8 md:space-y-5">
-      <nav className="flex justify-center items-center gap-2">
+    <div className="space-y-2 pb-8 pt-6 md:space-y-5">
+      <nav className="flex items-center justify-center gap-2">
         {!prevPage && (
-          <button className="cursor-auto disabled:opacity-50 px-3 py-1" disabled={!prevPage}>
+          <button className="px-3 py-1 disabled:opacity-50" disabled={!prevPage}>
             上一页
           </button>
         )}
@@ -101,7 +101,7 @@ function Pagination({ totalPages, currentPage }: PaginationProps) {
           <Link
             href={currentPage - 1 === 1 ? `/${basePath}/` : `/${basePath}/page/${currentPage - 1}`}
             rel="prev"
-            className="px-3 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+            className="rounded px-3 py-1 hover:bg-gray-200 dark:hover:bg-gray-700"
           >
             上一页
           </Link>
@@ -125,9 +125,9 @@ function Pagination({ totalPages, currentPage }: PaginationProps) {
               <Link
                 key={pageNumber}
                 href={pageNumber === 1 ? `/${basePath}/` : `/${basePath}/page/${pageNumber}`}
-                className={`px-3 py-1 rounded ${
+                className={`rounded px-3 py-1 ${
                   isCurrentPage
-                    ? 'bg-primary-500 text-white font-bold'
+                    ? 'bg-primary-500 font-bold text-white'
                     : 'hover:bg-gray-200 dark:hover:bg-gray-700'
                 }`}
               >
@@ -138,7 +138,7 @@ function Pagination({ totalPages, currentPage }: PaginationProps) {
         </div>
 
         {!nextPage && (
-          <button className="cursor-auto disabled:opacity-50 px-3 py-1" disabled={!nextPage}>
+          <button className="px-3 py-1 disabled:opacity-50" disabled={!nextPage}>
             下一页
           </button>
         )}
@@ -146,14 +146,14 @@ function Pagination({ totalPages, currentPage }: PaginationProps) {
           <Link
             href={`/${basePath}/page/${currentPage + 1}`}
             rel="next"
-            className="px-3 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+            className="rounded px-3 py-1 hover:bg-gray-200 dark:hover:bg-gray-700"
           >
             下一页
           </Link>
         )}
 
         {/* 跳转到指定页 */}
-        <div className="flex items-center gap-2 ml-4">
+        <div className="ml-4 flex items-center gap-2">
           <span className="text-sm text-gray-600 dark:text-gray-400">跳转到</span>
           <input
             type="number"
@@ -163,11 +163,11 @@ function Pagination({ totalPages, currentPage }: PaginationProps) {
             onChange={(e) => setJumpToPage(e.target.value)}
             onKeyPress={handleKeyPress}
             placeholder="页码"
-            className="w-16 px-2 py-1 text-center border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+            className="w-16 rounded border border-gray-300 bg-white px-2 py-1 text-center text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
           />
           <button
             onClick={handleJumpToPage}
-            className="px-3 py-1 rounded bg-primary-500 text-white hover:bg-primary-600"
+            className="rounded bg-primary-500 px-3 py-1 text-white hover:bg-primary-600"
           >
             跳转
           </button>
