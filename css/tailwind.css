@@ -173,6 +173,20 @@ input:-webkit-autofill:focus {
   overflow: auto hidden;
 }
 
+/* Code block overflow handling */
+article pre,
+.prose pre {
+  overflow-x: auto !important;
+  max-width: 100% !important;
+  width: min(100%, calc(100vw - 2rem)) !important; /* respect page padding on small screens */
+}
+
+article pre code,
+.prose pre code {
+  display: inline-block;
+  white-space: pre;
+}
+
 .content-header-link {
   opacity: 0;
   margin-left: -24px;
