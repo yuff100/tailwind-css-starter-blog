@@ -22,7 +22,7 @@ Facebook的数据中心包含数以百万计的基于PCIe的硬件组件（包�
 
 Facebook的数据中心采用了一系列基于PCIe的硬件组件
 
-**PCIe故障定位工具**
+# PCIe故障定位工具
 
 首先，我们简单介绍一下使用的工具：
 
@@ -43,7 +43,7 @@ Facebook的数据中心采用了一系列基于PCIe的硬件组件
 *   **Scuba**\[7\]: Facebook开发的一个快速、可扩展、分布式内存数据库，在Facebook用于大多数实时分析数据管理系统。
     
 
-**PCIe故障分析**
+# PCIe故障分析
 
 PCIe硬件组件（ASIC、网卡、SSD等）的多样性使得分析PCIe相关问题成为一项艰巨的任务。这些组件有不同的供应商、固件版本，以及运行在上面的不同的应用程序。在此基础上，应用程序本身可能有不同的计算和存储需求、应用配置和容错需求。
 
@@ -73,7 +73,7 @@ PCIe定义了两种错误报告模式：基线能力和AER能力。所有PCIe组
 
 通过这个总体方案，我们已经能够覆盖硬件健康指标，并修复数千台服务器和服务器组件。我们每周都能够检测、诊断、补救和修复数百台服务器上的各种PCIe故障。
 
-**PCIe故障处理流程**
+# PCIe故障处理流程
 
 以下是我们识别和修复PCIe故障的过程分解：
 
@@ -117,7 +117,7 @@ PCIe定义了两种错误报告模式：基线能力和AER能力。所有PCIe组
 
 我们已经能够覆盖硬件健康指标，并通过这种方式修复了数千台服务器和服务器组件。我们每周都能够检测、诊断、补救和修复数百台服务器上的各种PCIe故障。这使得我们的硬件更可靠、更有弹性、有更高的使用效率。
 
-> **Reference:**  
+# 参考文献  
 > \[1\] https://github.com/facebook/pcicrawler  
 > \[2\] https://engineering.fb.com/2020/08/05/open-source/pcicrawler/  
 > \[3\] https://engineering.fb.com/2020/12/09/data-center-engineering/how-facebook-keeps-its-large-scale-infrastructure-hardware-up-and-running/  
