@@ -1,0 +1,179 @@
+---
+title: 'Minerva -- Airbnb的大规模数据指标系统 Part 3'
+date: '2021-08-07'
+tags: ['大厂实践','数据工程','架构']
+draft: false
+summary: '数据是驱动业务、提供市场洞见的关键。这是Airbnb Minerva系列文章的第三篇，主要介绍Minerva如何为不同用户量身定制多功能的数据消费体验。'
+authors: ['default']
+---
+
+![](https://image.deepnomind.com/blog/image/ee0462e45445bd5ce69005bc33409a7d)
+
+> _这是Airbnb Minerva系列文章的第三篇，主要介绍Minerva如何为不同用户量身定制多功能的数据消费体验。原文：[How Airbnb Enables Consistent Data Consumption at Scale](https://medium.com/airbnb-engineering/how-airbnb-enables-consistent-data-consumption-at-scale-1c0b6a8b9206)_
+
+[Minerva -- Airbnb的大规模数据指标系统 Part 1  
+](https://www.deepnomind.com/blog/Minerva%20--%20Airbnb%E7%9A%84%E5%A4%A7%E8%A7%84%E6%A8%A1%E6%95%B0%E6%8D%AE%E6%8C%87%E6%A0%87%E7%B3%BB%E7%BB%9F%20Part%201)  
+[Minerva -- Airbnb的大规模数据指标系统 Part 2](https://www.deepnomind.com/blog/Minerva%20--%20Airbnb%E7%9A%84%E5%A4%A7%E8%A7%84%E6%A8%A1%E6%95%B0%E6%8D%AE%E6%8C%87%E6%A0%87%E7%B3%BB%E7%BB%9F%20Part%202)
+
+![](https://image.deepnomind.com/blog/image/26c0993ab0e233dbe817659ac16f7b67)
+
+# 简介
+
+在本系列的[第一篇文章](https://www.deepnomind.com/blog/Minerva%20--%20Airbnb%E7%9A%84%E5%A4%A7%E8%A7%84%E6%A8%A1%E6%95%B0%E6%8D%AE%E6%8C%87%E6%A0%87%E7%B3%BB%E7%BB%9F%20Part%201)中，我们介绍了Minerva在改善Airbnb数据分析工作方面所起的作用。在[第二篇文章](https://www.deepnomind.com/blog/Minerva%20--%20Airbnb%E7%9A%84%E5%A4%A7%E8%A7%84%E6%A8%A1%E6%95%B0%E6%8D%AE%E6%8C%87%E6%A0%87%E7%B3%BB%E7%BB%9F%20Part%202)中，我们深入探讨了Minerva的核心计算基础设施，并介绍了我们如何保证数据集和团队数据的一致性。在第三篇也是最后一篇文章中，我们将重点讲述Minerva如何极大的简化和改善用户的数据消费体验。具体来说，我们将展示统一指标层（我们称之为Minerva API）如何帮助我们构建为具有广泛背景和不同级别数据专业知识的用户量身定制的多功能数据消费体验。
+
+# 以指标为中心的方法（A Metric-Centric Approach）
+
+当用户采用数据来探索业务问题时，通常会考虑不同的指标和维度。例如，业务负责人可能想知道长期住宿（维度）占预订（指标）的百分比是多少。要回答这个问题，首先要找到正确的表单（where），通过必要的联合（joins）或过滤（filters）（how），最终聚合数据（how）以得到正确的答案。
+
+虽然许多传统BI工具试图代表用户把这些工作抽象出来，但大多数数据服务逻辑仍然严重依赖用户来确定“where”和“how”。在Airbnb，我们希望提供更好的用户体验——用户只要简单的请求获取指标和维度，就可以直接得到答案，而不必担心“where”或“how”的问题。我们将这一愿景称之为“以指标为中心的方法”，最终发现这是一个艰巨的工程挑战。
+
+#### 挑战一：“Where”
+
+在大多数传统数据仓库中，数据以表的形式组织。这意味着要响应某个查询，BI工具需要将相关的指标和维度与包含相关答案的物理表关联起来。然而，对于给定的指标和维度的组合，也许有许多数据集包含有相关答案。这些表通常具有不同程度的数据质量和正确性保证，因此选择正确的表来服务数据并非易事。
+
+#### 挑战二：“How”
+
+除了“where”之外，负责“how”的数据服务逻辑也有许多细微差别。首先，有不同的指标类型：由单个物理事件（例如：预定量）组成的_简单指标（simple metrics）_；基于维度过滤产生的一组简单指标组成的_过滤指标（filtered metrics）_（例如：中国的预订量）；由一个或多个非派生指标组成的_派生指标（derived metrics）_（例如：图书搜索匹配率)。此外，虽然有许多指标是递增的（例如：预订量），但也有许多指标不是：计数差、百分比和基于时间的快照等，不能简单的通过汇总单个事件来计算。始终如一的在所有场景中正确的计算这些不同类型的指标是一个巨大的挑战。
+
+#### 挑战三：与下游应用程序集成
+
+最后，只有在各种上下文环境、应用程序和工具中使用数据，才能做出基于数据的决策。指标越通用、越重要，就越有可能被广泛应用于各种场合。例如，总预订价值（Gross Booking Value，GBV）、预订夜数（nights booked）和收入（revenue）是Airbnb最常用的指标，被广泛应用于跟踪业务表现、作为随机控制实验的基准比较指标，并用于比较机器学习模型。在不同用例中基于这些指标提供服务，同时为用户提供上下文信息从而可以以正确的方式使用它们，是我们面临的另一个核心挑战。
+
+#### 解决方案
+
+我们通过构建Minerva API来解决这些挑战，这是一个指标服务层（metric-serving layer），充当上游数据模型和下游应用程序之间的接口。有了Minerva API，任何下游应用程序都能够以一致和正确的方式消费数据，而不用知道数据存储在哪里，也不用知道应该如何计算指标。本质上，Minerva API通过连接“what”和“where”来充当“how”。
+
+# Minerva API
+
+Minerva API由API web服务、元数据获取应用以及客户端（与[Apache Superset](https://superset.apache.org/)、[Tableau](https://www.tableau.com/)、[Python](https://www.python.org/)和[R](https://www.r-project.org/)集成）组成。这些组件为下游应用程序提供本地NoSQL和SQL指标查询。
+
+![Minerva API充当消费者和底层数据集之间的接口](https://image.deepnomind.com/blog/image/d6e1692c63538ecf11ca0e36ca173e44)
+
+#### 元数据获取器：抽象“Where”
+
+我们前面提到过，用户只需要向Minerva提供指标和规格参数，而不需要指定“where”。当发出数据请求时，Minerva会花费大量精力来确定应该使用哪个数据集来响应该请求。
+
+Minerva在幕后选择最佳数据源之前需要综合考虑多个因素，其中最重要的因素之一是数据完整性。这意味着选择用于查询的任何数据源都应该包含给定用户查询请求所需的所有列，并且必须涵盖查询请求所需的时间范围。
+
+为此，我们构建了一个名为元数据获取器（Metadata Fetcher）的服务，该服务每15分钟定期从数据源获取元数据，并将其缓存到MySQL数据库中。具体来说，我们定期从S3获取Minerva配置的最新副本（存储在Thrift二进制文件中），从而获取Druid中每个有效Minerva数据源的列表。对于每个数据源，我们查询Druid代理以读取它的名称以及相关的指标和维度列表。此外，我们还可以从代理获取最小日期、最大日期以及日期计数，以确定是否有任何丢失的数据。每次获取新信息时，我们都会更新MySQL数据库，以维护真实数据源。通过元数据获取器，我们能够在任何给定的时间使用最好的数据源来服务数据请求。
+
+#### 数据API：抽象“How”
+
+假设用户希望了解2021年8月的4周时间内，除私人房间外，各目的地地区的日均价格（average daily price，ADR）下降趋势。示例查询的完整规格定义如下所示：
+
+```json
+{
+      metric: ‘price_per_night’,
+      groupby_dimension: ‘destination_region’,
+      global_filter: ‘dim_room_type!=”private-room”’,
+      aggregation_granularity: ‘W-SAT’,
+      start_date: ‘2021–08–01’,
+      end_date: ‘2021–09–01’,
+      truncate_incomplete_leading_data: ‘true’,
+      truncate_incomplete_trailing_data: ‘true’,
+}
+
+```
+
+当Minerva接收到这样的请求时，它不仅需要确定从哪里获取数据，还需要知道如何过滤、组合以及聚合数据以获得最终的结果。它采用了一种策略，通过[Split-Apply-Combine范式](https://www.jstatsoft.org/article/view/v040i01)来实现，该范式通常用于数据分析。
+
+![对`price_per_night`指标应用Split-Apply-Combine范式](https://image.deepnomind.com/blog/image/73a9cd562f80843cf83af24d0ecb03b6)
+
+##### 步骤一：将请求拆分为原子指标请求
+
+当Minerva API接收到如上所述的查询请求时，它所做的第一件事就是通过创建一组相关的子查询，将任何派生指标分解为我们称为Minerva“原子”指标。如果一个用户查询只指定一个原子的Minerva指标，那么第一步基本上是一个空操作。
+
+在上面的例子中，给定`price_per_night`指标是一个比率指标（派生指标的一种特例），它包含一个分子(`gross_booking_value_stays`)和一个分母(`nights_booking`)，Minerva API将这个请求分解为两个子请求。
+
+##### 步骤二：采用并执行每个子查询
+
+对于第1步中确定的原子指标，Minerva利用S3中存储的指标配置来推断相关的指标表达式和元数据，从而生成子查询。我们继续讨论这个例子：Minerva数据API查找`gross_booking_value_stays`的指标定义，发现它是一个SUM聚合，类似的，`nights_booking`指标也是如此。在这两个请求中，通过全局过滤器`dim_room_type != " private-room"`用于确保私有空间不在计算范围内。
+
+![对ADR指标应用Split-Apply-Combine范式](https://image.deepnomind.com/blog/image/d2396cc23dde08dc789f7ed34a3948f6)
+
+一旦为每个原子指标都生成了关联的子查询，Minerva API最终将查询发送给Druid或Presto。它将查询分割成几个跨越更小时间范围的“片”，然后在达到资源限制时将结果合并到单个数据帧中。在基于聚合粒度拼接数据帧之前，API还会丢弃任何不完整的前置或后置数据。
+
+##### 步骤三：将原子指标结果合并到单个数据帧中
+
+一旦Minerva获取到每个原子指标的数据帧，它会通过连接时间戳列上的数据帧将它们组合成一个单独的数据帧。作为最后一步，Minerva API在以序列化JSON格式将最终结果返回给客户端之前将执行任何必要的聚合后计算、排序和限制操作。
+
+总之，通过Minerva的数据源API和数据API，我们可以抽象出确定从哪里获取数据以及如何返回数据的过程。这个API作为Minerva的单一抽象层，可以满足来自下游应用程序的任何请求。然而，我们的故事并没有就此结束：我们的许多工程挑战都涉及到如何将不同的应用程序与这个API集成，我们将在下一节探讨这些挑战。
+
+# 数据消费经验
+
+考虑到Airbnb内部数据消费者的多样性，我们开始构建针对不同角色和用例的工具。通过Minerva API，我们构建了广泛的用户界面，这些用户界面提供了一致的数据消费体验。正如我们在[第一篇文章](https://www.deepnomind.com/blog/Minerva%20--%20Airbnb%E7%9A%84%E5%A4%A7%E8%A7%84%E6%A8%A1%E6%95%B0%E6%8D%AE%E6%8C%87%E6%A0%87%E7%B3%BB%E7%BB%9F%20Part%201)中简要提到的，有四个主要的集成点，每个点支持一组不同的工具和用户：
+
+*   **数据分析（Data Analysis）：**与Python和R集成，主要用于高级数据分析
+    
+*   **数据探索（Data Exploration）：**与BI工具（如Superset、[Metric Explorer](https://medium.com/airbnb-engineering/supercharging-apache-superset-b1a2393278bd#c576)和Tableau)的集成，为精通数据的分析师量身定制，以帮助商业洞察
+    
+*   **报告（Reporting）：**与[XRF（eXecutive Reporting Framework，执行报告框架）](https://medium.com/airbnb-engineering/how-airbnb-achieved-metric-consistency-at-scale-f23cc53dea70#efb9)集成，为希望了解当前业务状态的管理层量身定制
+    
+*   **实验（Experimentation）：**与ERF（Experimentation Reporting Framework，实验报告框架）集成，专为在Airbnb进行A/B测试的数据科学家、工程师或产品经理量身定制
+    
+
+当我们构建这些特性时，我们总是在一致性、灵活性和可访问性之间进行权衡。例如，Metric Explorer主要是为非数据专家的非技术用户构建的，这意味需要为它优化一致性和可访问性，而不是灵活性。Metric Explorer有严格的执行保护，防止用户做错误的事情，并且几乎没有机会偏离确定的道路。
+
+作为另一个极端，通常受数据科学家青睐的R和Python客户端要灵活得多。用户可以完全控制如何利用客户端API来执行定制分析或可视化。在接下来的几节中，我们将介绍这些消费体验是如何被创建的。
+
+#### 与Metric Explorer集成
+
+Metric Explorer由Airbnb创建，任何人（无论他们的数据专业水平如何）都可以利用数据做出明智的决策。由于其面向广泛的目标用户，Metric Explorer优化了可访问性和数据一致性，而不是灵活性。
+
+![Metric Explorer对于想要回答高级业务问题的非技术用户来说非常适合](https://image.deepnomind.com/blog/image/97a0704e33b46e217189b30767481b0f)
+
+所有Metric Explorer的指标、维度和相关元数据都来自Minerva的指标存储库，并被注入到[Elasticsearch](https://www.elastic.co/elasticsearch/)中。在用户对数据执行任何操作之前，这些元数据作为上下文方便的显示在右侧栏上。
+
+当用户选择执行Group By和Filter之类的数据操作时，Metrics Explorer按等级顺序显示维度，这样只有很少或没有业务上下文的用户可以轻松的挖掘信息，而不需要提前知道维度值（如上所示）。
+
+当用户对数据进行切片时，Minerva API会自动确定哪个组合是有效的，并且只会对有效的数据组合进行切割。在这种体验中，用户不需要知道任何有关所涉及指标来源的底层物理表的信息。
+
+#### 与Apache Superset集成
+
+虽然Metrics Explorer提供了有关参数的高级信息，但更有探索精神的用户可以在Superset中进行更多操作。[Apache Superset](https://medium.com/airbnb-engineering/supercharging-apache-superset-b1a2393278bd)是Airbnb自助BI解决方案的核心工具。考虑到Superset在公司内的广泛应用，我们知道需要提供类SQL的功能，从而与Superset进行集成，以便Minerva能够被广泛采用。
+
+用于Apache Superset和Tableau等BI工具的客户端接口要复杂得多，很多应用可以选择直接通过RESTful接口调用Minerva API。这些BI工具通常使用SQL（通过客户端），而不是HTTP请求进行访问。这意味着Minerva API需要支持类SQL接口，该接口需要遵循[OLAP](https://en.wikipedia.org/wiki/Online_analytical_processing)查询结构。为了构建这样一个接口，我们利用[sqlparse](https://pypi.org/project/sqlparse/v)在Minerva API中添加了一个SQL解析器，用于将SQL语句解析为AST，然后对其进行验证并将其转换为本地HTTP请求。
+
+遵循DRY原则，我们复用[Apache Calcite Avatica](https://calcite.apache.org/avatica/)定义了客户机和服务器之间的通用数据库连接API。Minerva API充当Avatica HTTP服务器，客户端要么是基于[SQLAlchemy](https://www.sqlalchemy.org/)定制的[Python Database API](https://www.python.org/dev/peps/pep-0249/)数据库驱动程序，要么是Avatica提供的JDBC连接器（Tableau）。
+
+传统BI工具在工具内部实现自定义业务逻辑，而Minerva通过类SQL的AGG指标表达式来整合这些逻辑。下表中，我们比较了在传统BI工具和Superset工具中运行的查询：
+
+  
+
+![](https://image.deepnomind.com/blog/image/91f57a03eba202689cffc1e2ea128c87)
+
+在左边的查询中，用户不需要指定指标应该从哪里计算，也不需要指定正确的聚合函数——这些细节都被Minerva抽象了。
+
+最后，假设Minerva中有12,000个指标和5,000个维度，但并不是所有的指标-维度组合都是有效的。例如，活动列表可以通过主机所在的位置来切割，但不能通过客人的出发位置来切割（也就是说，每个预订的客人属性可能不同）。我们在图表控件中添加了事件监听器，以确保左侧视窗中只显示符合条件的指标和维度的组合。这种设计有助于减少认知负载，简化数据挖掘过程。
+
+![Superset是以指标为中心的，用户可以从单个虚拟源查询所有指标和维度](https://image.deepnomind.com/blog/image/9f2f2039bc45353ca4e97e6c5c4fe57c)
+
+#### 与XRF（eXecutive Reporting Framework）集成
+
+如[第一篇](https://www.deepnomind.com/blog/Minerva%20--%20Airbnb%E7%9A%84%E5%A4%A7%E8%A7%84%E6%A8%A1%E6%95%B0%E6%8D%AE%E6%8C%87%E6%A0%87%E7%B3%BB%E7%BB%9F%20Part%201)所述，XRF是一个框架，用于生成由执行人员和领导团队使用的简洁、高保真的业务关键报告。这个框架是通过Minerva的配置来配置的，并且完全由Minerva API提供支持。
+
+![XRF自动化了大量重复的手工工作，并允许我们标准化高保真的业务关键报告](https://image.deepnomind.com/blog/image/9dbc9a8eac1c8eee0af3d1af1042efcb)
+
+要管理XRF报告，用户首先需要定义报告配置，并指定所需的业务指标、维度切片以及需要应用的全局筛选器。此外，用户还可以配置其他控制行为，比如某个指标是否需要执行聚合（如MTD、QTD或YTD）操作，以及为基于时间的比较增长率（如YoY、MoM或WoW）指定合适的单位。一旦指定了这些设置，Minerva API就会执行必要的聚合操作以及生成最终的报告。
+
+XRF输出的数据可以通过自定义GoogleSheetHook渲染在Google表格中，也可以通过Presto连接到Tableau中。通过利用Minerva及其聚合逻辑中的指标定义，我们在用户选择的表示层中强制执行一致性保障。
+
+#### 与ERF（Experimentation Reporting Framework）集成
+
+与分析或报告用例不同，实验用例比较特殊，用于报告的指标只是一个起点。为了做出正确的因果推论，在将指标转换为可用于有效统计比较的汇总统计数据之前，必须将指标与实验分配的数据结合起来。
+
+通常，Minerva向ERF提供“原始事件”。根据随机单元和分析单元，我们使用不同的主题键将Minerva数据加入到分配日志中，以便每个事件都有相关的主题，以及与之相关的实验组。最后计算并汇总统计信息（如平均值、百分比变化和p值）并显示在ERF记分卡中。
+
+![显示实验统计摘要的ERF记分卡](https://image.deepnomind.com/blog/image/de0a8749c625c8125b68fccf344c1485)
+
+实验UI还会直接显示相关的Minerva元数据，用户还可以查看Minerva事件的描述和所有权信息。一个带有ETA信息的谱系视图允许用户[跟踪ERF指标进展](https://medium.com/airbnb-engineering/visualizing-data-timeliness-at-airbnb-ee638fdf4710)，并帮助他们在出现延迟的情况下联系相关的Minerva指标所有者。
+
+![ERF显示指标元数据，链接到[SLA Tracker](https://medium.com/airbnb-engineering/visualizing-data-timeliness-at-airbnb-ee638fdf4710)从而可视化数据谱系和时间线](https://image.deepnomind.com/blog/image/cd667f872a32115dc956be0a8ed63ea6)
+
+总之，Minerva及其多种集成工具帮助用户能够在他们的计划报告中轻松跟踪指标，测量实验产生的变化，并探索意外的变化——所有这些都让用户相信数据是正确和一致的，这种信心极大的减少了获取洞察所花费的时间，增加了对数据的信任，并有助于支持数据驱动的决策。
+
+# 尾声
+
+Minerva引入了一种思考数据的新方法，不仅意味着以业务和指标为中心的用户接口，还需要我们调整传统BI工具（主要使用SQL）来适应Minerva API的接口。在某种意义上，这类似于将一个新的方钉（Minerva）插入一个现有的圆孔（BI Tools）中。
+
+随着越来越多的组织接受类似Minerva的指标层的理念，我们相信将会有一系列新的挑战等着我们。也就是说，一些开创性的工作肯定会把分析带到新的水平，我们为能够为这一领域做出创新工作而感到自豪，我们也希望会有更多公司跟我们一样在这一领域做出贡献。
