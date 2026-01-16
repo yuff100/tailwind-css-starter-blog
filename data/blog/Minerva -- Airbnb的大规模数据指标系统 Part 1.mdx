@@ -1,0 +1,135 @@
+---
+title: 'Minerva -- Airbnb的大规模数据指标系统 Part 1'
+date: '2021-08-07'
+tags: ['大厂实践','数据工程']
+draft: false
+summary: '数据是驱动业务、提供市场洞见的关键。这是Airbnb Minerva系列文章的第一篇，介绍了Airbnb的数据指标平台Minerva的诞生背景、基本功能。'
+authors: ['default']
+---
+
+![](https://image.deepnomind.com/blog/image/ee0462e45445bd5ce69005bc33409a7d)
+
+> _数据是驱动业务、提供市场洞见的关键。这是Airbnb Minerva系列文章的第一篇，介绍了Airbnb的数据指标平台Minerva的诞生背景、基本功能。原文链接：[How Airbnb Achieved Metric Consistency at Scale](https://medium.com/airbnb-engineering/how-airbnb-achieved-metric-consistency-at-scale-f23cc53dea70)_
+
+![数据反映了用户的心声，在2019新冠病毒病大流行期间，我们看到使用Airbnb旅行已经变得极端本地化](https://image.deepnomind.com/blog/image/db202bcff5f21c07abf6a946265aae6d)
+
+# 简介
+
+Airbnb依靠数据做出关键决策，通过随机对照实验验证产品想法，严格跟踪业务表现，以确保为利益相关者实现价值最大化。为了实现这些目标，我们需要构建一个健壮的数据平台，以满足内部用户的端到端需求。
+
+虽然我们之前已经分享了[如何将数据导入数据仓库](https://medium.com/airbnb-engineering/scaling-spark-streaming-for-logging-event-ingestion-4a03141d135d)，以及如何帮助用户[使用上下文数据进行自己的分析](https://medium.com/airbnb-engineering/supercharging-apache-superset-b1a2393278bd)，但我们还没有讨论中间层：如何正确建模并将数据转换为准确的、可以进行分析的数据集。
+
+在这篇文章中，我们将分享构建Minerva的过程。Minerva是Airbnb的指标平台，在全公司作为分析、报告和实验的唯一可信数据源。我们将介绍Minerva的创建背景、核心功能和工具生态系统，并详细介绍它对Airbnb的影响。在下一篇文章中，我们将深入探讨Minerva背后的技术，并分享我们一路学到的经验教训。通过发布这个系列，希望我们的读者能够欣赏像Minerva这样的系统的力量，在为自己的组织创建类似东西的时候可以受到一定的启发。
+
+# Airbnb数据分析系统简史
+
+和许多数据驱动的公司一样，Airbnb在其数据之旅的起步阶段并不顺利。大约在2010年，全公司只有一名全职数据分析师，而他的笔记本电脑实际上就是公司的数据仓库。查询通常是直接针对生产数据库进行的，昂贵的查询偶尔会导致严重事故，甚至导致Airbnb.com瘫痪。尽管存在缺陷，但这个简单的解决方案多年来帮助Airbnb找到了许多增长机会。
+
+随着Airbnb在2010年代初的持续增长，[越来越多的数据科学家加入了公司](https://medium.com/airbnb-engineering/at-airbnb-data-science-belongs-everywhere-917250c6beba)，数据的规模和多样性都在不断增长。就在那时，我们经历了第一次变革：升级和稳定我们的[数据基础设施](https://medium.com/airbnb-engineering/data-infrastructure-at-airbnb-8adfb34f169c)。我们从Chronos转向了自己开发的、开源的[Apache Airflow](https://medium.com/airbnb-engineering/airflow-a-workflow-management-platform-46318b977fd8)，用于工作流编排，并投入资源构建了一套名为“core_data”的关键核心数据表。
+
+![Airbnb和支撑它的数据多年来大幅增长](https://image.deepnomind.com/blog/image/e3a581269eac8fa8f4d4c99abcfc9d0c)
+
+以“core_data”为基础，Airbnb的数据分析开始蓬勃发展。首先，我们通过[建立](https://medium.com/airbnb-engineering/experiment-reporting-framework-4e3fcd29e6c0)和[扩展](https://medium.com/airbnb-engineering/https-medium-com-jonathan-parks-scaling-erf-23fd17c91166) Airbnb 的测试平台，将 A/B 测试文化引入Airbnb。我们建立了一个内部的数据目录 -- [Dataportal](https://medium.com/airbnb-engineering/democratizing-data-at-airbnb-852d76c51770)，来组织和记录我们的数据，并创建了开源的[Apache Superset](https://medium.com/airbnb-engineering/caravel-airbnb-s-data-exploration-platform-15a72aa610e5)，支持更多的用户可以独立的以交互式的方式分析数据。最后，我们推出了 [Data University](https://medium.com/airbnb-engineering/how-airbnb-democratizes-data-science-with-data-university-3eccc71e073a) 来支持数据教育，这是一个面向非数据科学家进行数据技能教育的项目，旨在让Airbnb的数据分析大众化。
+
+# 成长的烦恼
+
+虽然“core_data”帮助Airbnb的数据能力提升了几个台阶，但我们为此也付出了巨大的代价。事实上，数据和用例的激增给数据的生产者和消费者带来了严重的成长烦恼。
+
+首先，随着“core_data”越来越受欢迎，更多的数据生产者希望使用它进行分析、预测和实验。每天都会有新表基于”core_data“表创建出来，但却无法知道是否已经存在类似的表。我们仓库的复杂性持续增长，数据变更变得不可能被跟踪。当发现并修复了上游的数据问题时，并不能保证修复会传播到所有下游作业。结果，数据科学家和工程师花了无数的时间调试数据差异，到处救火，经常感到效率低下和挫败感。
+
+![建立在'core_data'之上的派生表的激增造成了一些严重的成长烦恼](https://image.deepnomind.com/blog/image/6f392065f672107c659850586de24817)
+
+其次，关于数据的使用，我们听到决策者抱怨说，对于非常简单的业务问题，不同的团队报告了不同的数字，而且没有简单的方法知道哪个数字是正确的。几年前，当我们的CEO Brian问一些简单的问题，比如哪个城市在前一周的预订量最多时，Data Science和Finance有时会使用不同的表、指标定义和业务逻辑提供不同的答案。随着时间的推移，即使是数据科学家也开始怀疑自己的数据，对数据质量的信心下降，决策者的信任也下降了。
+
+# 与Minerva一起克服成长的烦恼
+
+随着这些痛点的恶化，Airbnb开始了一项为期数年的改革其数据仓库的旅程，目标是大幅提高公司的数据质量。作为第一步，我们的数据工程团队从头重建了几个关键的业务数据模型，这导致了一组经过认证的、精简的、规范化的表，去掉了不必要的连接。这些经过审查的表现在成为了我们分析仓库的新基础。
+
+然而，我们的工作并没有就此停止。为了将这些表格转化为见解，我们需要能够通过编程将它们连接在一起，以创建易于分析的数据集。我们需要能够在业务逻辑发生变化时填充数据。最后，我们需要在不同的消费工具中正确、一致的呈现数据。
+
+这就是Airbnb的度量平台Minerva出现的背景。Minerva将不同的真实数据和不同的维度作为输入，执行数据反规格化，并将聚合的数据提供给下游应用程序。Minerva API在上游数据和下游消费之间搭建了桥梁，使数据工程团队能够灵活地修改核心表，同时维护对各种下游消费者的支持。这个API在Airbnb的下一代数据仓库架构中起着至关重要的作用。
+
+![Minerva是Airbnb的指标平台，在Airbnb的新数据仓库架构中扮演着核心角色](https://image.deepnomind.com/blog/image/b0ab975f41cfb093db9c5dc11fde004e)
+
+到目前为止，我们在Minerva上有超过12000个指标、4000个维度、超过200个数据生成器支撑不同的职能（例如：数据、产品管理、财务、工程等）和团队（例如：核心产品，信托，支付等）。现在，大多数团队都认为Minerva是他们在Airbnb上进行数据分析、报告和实验的首选框架。
+
+![在过去的两年里，Airbnb内部对Minerva的使用有了巨大的增长](https://image.deepnomind.com/blog/image/c8a7caa912c7aea2eadc87a8ea038857)
+
+# Minerva的数据生产
+
+从基础架构的角度来看，Minerva是建立在开源项目之上的。它使用Airflow进行工作流编排，使用Apache Hive和Apache Spark作为计算引擎，使用Presto和Apache Druid进行消费。从指标的创建到计算、服务、消费，以及最终的弃用，Minerva涵盖了指标的整个生命周期。
+
+![Minerva在Airbnb负责管理指标的整个生命周期](https://image.deepnomind.com/blog/image/00c31ff5ac461c892a30f710d805957b)
+
+*   **指标定义（Metrics Definition）**：Minerva在一个集中的Github仓库中定义了关键的业务指标、维度和其他元数据，公司里任何人都可以查看和更新这些数据。
+    
+*   **已验证的工作流（Validated Workflow）**：Minerva开发流程强制执行最佳数据工程实践，如代码审查、静态检查和测试运行。
+    
+*   **DAG编排（DAG Orchestration）**：Minerva通过最大限度重用数据和中间结果有效的执行数据去规格化。
+    
+*   **计算运行时（Computation Runtime）**：Minerva有一个复杂的计算流，可以在作业失败后执行自愈操作，并有内置的检查来确保数据质量。
+    
+*   **指标/元数据服务（Metrics / Metadata Serving）**：Minerva提供了一个统一的数据API，可以按需提供聚合指标和原始指标。
+    
+*   **灵活的回填（Flexible Backfills）**：Minerva对数据执行版本控制，因此可以自动跟踪和回填对数据集的重大更改。
+    
+*   **数据管理（Data Management）**：Minerva自带一系列内置数据管理功能（如成本归因、GDPR选择性删除、数据访问控制和自动弃用策略等）。
+    
+*   **数据保留（Data Retention）**：Minerva构建了基于使用的数据保留和垃圾收集功能，可以自动删除资源占用大但却没人用的数据集。
+    
+
+上面提到的特性允许我们标准化度量数据的创建、计算和交付。在下一篇文章中，我们将深入研究这些特性，并进行更详细的解释!
+
+# Minerva的数据消费
+
+Minerva的产品愿景是允许用户“一次性定义参数，随处使用”。也就是说，在Minerva中创建的指标应该可以很容易地在Superset\[2\]等公司仪表板工具中访问，在我们的A/B测试框架ERF\[6\]中跟踪，或者由我们的异常检测算法处理以发现业务异常，这些都只是其中的一些例子。在过去的几年里，我们与其他团队紧密合作，在Minerva的基础上创建了一个工具生态系统。
+
+![Minerva的愿景是“定义一次，随处使用”](https://image.deepnomind.com/blog/image/9cc6627aa00a9fb7babc9dce32459d73)
+
+#### 数据目录（Data Catalog）
+
+首先，我们与Analytics Product团队紧密合作，在Airbnb的数据目录Dataportal\[8\]中索引所有Minerva指标和维度。当用户与Dataportal进行交互并搜索指标时，Minerva指标会排在搜索结果的顶端。Dataportal还可以显示上下文信息，如认证状态、所有权和流行度等，以便用户可以衡量指标的相对重要性。对于大多数非技术用户来说，Dataportal是他们使用Minerva的第一入口。
+
+![Minerva指标在Dataportal UI中被索引和编目](https://image.deepnomind.com/blog/image/46eedd448f321a3b2993765a655d3ad6)
+
+#### 数据探索（Data Exploration）
+
+在选择度量指标之后，用户被重定向到度量资源管理器（Metric Explorer），这是Dataportal的一个组件，支持开箱即用的数据探索。在指标页面上，用户可以通过额外的切片和下拉菜单（如“Group By”和“Filter”）查看指标的趋势。那些希望进行深入研究的人可以点击Superset视图来执行更高级的分析。在此过程中，Metric Explorer会显示元数据，如指标所有者、历史登录时间和指标描述，以提供更丰富的数据上下文。这种设计平衡了技术用户和非技术用户的需求，因此他们可以在适当的地方无缝的探索数据。
+
+![用户可以在Metric Explorer和Superset中无缝查看趋势和异常](https://image.deepnomind.com/blog/image/f9215e35118cc29d2f2b3547dfbd29dd)
+
+#### A/B测试
+
+在这之前，Airbnb的测试报告框架（ERF，Experimentation Reporting Framework）有自己的测试指标库，称为“metrics repo”。测试人员可以在测试中添加任何商业指标，并比较控制组和实验组的结果。不幸的是，metrics repo不能用于测试之外的其他用例，所以我们决定将Minerva与ERF集成，这样A/B测试的所有基础事件都可以由Minerva定义和提供。在测试和分析中使用相同的数据源意味着数据科学家可以自信地理解某些实验[如何影响最高业务指标](https://medium.com/airbnb-engineering/designing-experimentation-guardrails-ed6a976ec669)。
+
+#### 执行报告（Executive Reporting）
+
+自从Airbnb上市以来，我们就采取了按周、月、季度的节奏来评估Airbnb的经营业绩的做法。在这些会议中，不同职能部门的领导开会并讨论当前的业务状态。这种类型的会议需要概括性的、简洁的执行报告。通常会对数据进行汇总，分析和绘制趋势，并通过聚合（例如，今年以来）或者基于时间比较（例如，按年比较）的方式呈现指标变化。
+
+![这是构建在Minerva之上的COVID-19仪表板的报告配置示例](https://image.deepnomind.com/blog/image/29b58eb4dc3644bc16ac50c910c22492)
+
+为了支持这种类型的报告，我们构建了一个执行报告框架（XRF，eXecutive Reporting Framework）。XRF获取用户指定的Minerva指标和维度的列表，并将它们转换为报表友好的聚合指标时间序列。这个框架自动化了大量的人工工作，并允许我们通过利用用于分析和实验的相同的Minerva指标和维度来标准化高质量的关键业务报告。
+
+#### 数据分析（Data Analysis）
+
+最后，Minerva的数据可以通过Minerva API暴露给Airbnb定制的R或Python客户端。这使得数据科学家可以轻松地在笔记本环境中查询Minerva数据。重要的是，在笔记本环境中显示的数据的计算和显示方式与前面提到的工具（如Superset和Metric Explorer）完全相同。这为数据科学家节省了大量的时间，因为他们可以根据分析的复杂性来选择合适的工具。值得注意的是，该数据API鼓励实现轻量级的内部工具原型，这些工具稍后可以被产品化并在公司内共享。例如，在过去两年中，数据科学家使用这个API构建了一个时间序列分析工具和一个电子邮件报告框架。
+
+![数据科学家可以使用Python客户端在Minerva中检索聚合数据并进行分析](https://image.deepnomind.com/blog/image/e62dc7e5c4f0ba35f527c1d4a2ba5c1e)
+
+# 我们如何利用Minerva数据应对COVID-19危机
+
+随着Minerva成为Airbnb的核心分析工具，我们一次又一次地看到它给Airbnb的数据社区带来了力量和生产率的提高。在最后一节中，我们想给出一个具体的例子，说明Minerva在COVID-19危机期间如何帮助我们的业务。
+
+2020年3月，全球旅行因COVID-19而停止。几乎一夜之间，Airbnb的预订量大幅下降，取消预订的数量飙升。对我们来说，这是一个可怕的时刻，它提出了许多重要的商业问题：新冠病毒如何影响我们的客房储备？对入住率有什么影响？越来越多的订单被取消，对财务有什么影响？新冠病毒如何改变了不同距离的出行需求？我们需要快速、正确的回答所有这些问题。
+
+![在Minerva的帮助下，我们能够大幅缩短从数据整理到深入发现和评估COVID-19对Airbnb业务的影响的时间!](https://image.deepnomind.com/blog/image/bdbb5bf8503d46b216c78e2e75e7366c)
+
+为了提供答案，我们的数据科学团队收集了这些问题，并开始头脑风暴，思考我们如何利用数据来回答这些问题。至关重要的是，由于Minerva已经定义了供应、需求、财务和客户支持的许多重要业务指标和维度，我们的中央分析团队能够在短短几天内构建一个执行仪表盘，并推出初始版本。COVID-19仪表盘迅速成为唯一权威的数据源，并在危机期间受到我们执行团队的密切关注。自那以后，它的浏览量已经超过1.1万次，有1500名不同的受众。不出所料，2020年COVID-19仪表板成为Airbnb上浏览量最高的超级仪表板。
+
+从Minerva指标中获得的洞见也让Airbnb能够自信的确定快速变化的前景。例如，我们发现了新的市场机遇（如需求转向本地旅游和长期旅行）。这些发现促使我们重新设计了产品页面的几个重要接触点，以满足用户偏好的变化。在危机时刻，回答问题和揭示洞见的能力比以往任何时候都重要。感谢Minerva提供的数据，使我们能够有效地做到这一点！
+
+# 总结
+
+在这篇文章中，我们简要总结了Airbnb数据分析的历史，过去几年我们面临的成长的烦恼，以及我们为什么要创建Minerva（Airbnb的指标度量基础设施）。特别是，我们介绍了如何通过Minerva生成和消费数据。在文章的最后，我们还介绍了Minerva如何帮助Airbnb应对COVID-19危机。
+
+在下一篇文章中，我们将深入探讨Minerva的技术架构，包括设计原则、用户开发流程以及数据计算图。在本系列的最后一篇文章中，我们将介绍Minerva API，这是我们的单一数据抽象层，它使之前提到的所有和其他系统的集成成为可能。我们将通过分享构建Minerva的经验教训来结束本系列，希望这些经验教训对其他构建类似系统的人有所帮助。
