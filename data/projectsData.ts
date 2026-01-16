@@ -30,6 +30,12 @@ const projectsData: Project[] = [
     imgSrc: '/static/images/wechat-to-markdown.png',
     href: 'https://w2m.deepnomind.com/',
   },
+  {
+    title: 'OpenCode 中文教程 Demo',
+    description: '提供系统化的中文 OpenCode 教程，帮助开发者快速掌握 OpenCode，零基础学会使用 AI。',
+    imgSrc: '/static/images/learn-opencode.png',
+    href: 'https://learn-opencode.deepnomind.com/',
+  },
 ]
 
 export default projectsData
