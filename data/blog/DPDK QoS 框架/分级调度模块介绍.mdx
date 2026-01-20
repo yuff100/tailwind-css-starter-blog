@@ -1,0 +1,108 @@
+---
+title: 'DPDK QoS 框架 - 2. 分级调度模块介绍'
+date: '2021-08-15'
+tags: ['DPDK','架构']
+draft: false
+summary: '因为项目需要做Traffic Shaping，看了下DPDK的QoS框架，做一下简单翻译以加深学习理解。这篇翻译基于DPDK 21.02 版本，介绍了DPDK QoS 分级调度模块的概要设计和API。本系列一共4篇文章，这是第二篇。'
+authors: ['default']
+---
+
+> _因为项目需要做Traffic Shaping，看了下DPDK的QoS框架，做一下简单翻译以加深学习理解。这篇翻译基于DPDK 21.02 版本，介绍了DPDK QoS 分级调度模块的概要设计和API。本系列一共4篇文章，这是第二篇。原文链接：[DPDK Quality of Service (QoS) Framework](http://doc.dpdk.org/guides-21.02/prog_guide/qos_framework.html)。_
+
+分级调度模块通常位于报文传输阶段，其目的是根据每个网络节点的服务水平协议(Service Level agreement, SLA)所规定的策略，对不同用户和不同流量组的报文进行基于优先级的传输。
+
+# 1. 概述
+
+分级调度模块类似于网络处理器里的流量管理器。网络处理器通常实现流级别(或流组级别)的包队列和调度，它类似缓冲区，能够在真正传输之前临时存储大量的数据包。当网卡请求获取更多的数据包进行传输时，这些数据包被从队列中移除并交给网卡发送队列。流量管理器通过不同的选包逻辑实现预定义的SLA。  
+
+![图1. 分级调度模块内部架构](https://image.deepnomind.com/blog/image/9390406a5a0d37f980e6121eeb857c1b)
+
+分级调度模块针对大规模包队列进行了优化。当只需要少量队列时，应该使用消息传递队列而不是这个模块。有关更详细的讨论，请参见最差性能场景章节。_（队列不多的时候，分级调度的性能损耗占比比较大，可以考虑自己实现简单的调度逻辑直接处理。）_
+
+# 2. 调度层级
+
+分级调度模块的层级如图2所示。最上层是以太网发送端口（1/10/40G网口），往下依次是子端口、管道、流量组、队列。
+
+  
+
+![图2. 端口的调度层级](https://image.deepnomind.com/blog/image/a69587e3dfd6a3d07e1d7514f823407c)
+
+下表详细介绍了每个层次的功能。
+
+| # | 层级 | 同级模块数 | 功能描述 |
+| --- | --- | --- | --- |
+| 1 | 端口 | · | 1. 以太网发送端口（1/10/40G网口）2. 多个端口按轮循顺序调度，所有端口具有相同的优先级。 |
+| 2 | 子端口 | 可配（默认：8） | 1. 使用令牌桶算法进行流量整形(每个子端口一个令牌桶)。2. 子端口上每个流量组(TC)强制执行的带宽上限。3. 低优先级的TC可以重用高优先级TC当前未使用的子端口带宽。 |
+| 3 | 管道 | 可配（默认：4K） | 1. 使用令牌桶算法进行流量整形(每个管道一个令牌桶。 |
+| 4 | 流量组（TC） | 13 | 1. 同一管道的TC按严格的优先顺序处理。2. 在管道层级上强制限制每个TC的带宽上限。3. 低优先级TC可以重用高优先级TC当前未使用的管道带宽。4. 当子端口TC被超额订阅(配置时间事件)时，管道TC上限被限制为一个动态调整的值，该值由所有子端口管道共享。（第4点不太理解，有空看一下代码理解一下。） |
+| 5 | 队列 | 高优先级TC：1，最低优先级TC：4 | 1. 所有高优先级TC (TC0、TC1、…、TC11)都有1个队列，而最低优先级TC (TC12)，即Best Effort (BE)，有4个队列。2. 优先级最低的BE (TC)队列通过WRR (Weighted Round Robin)按照预定的权重进行调度。 |
+
+# 3. API
+
+## 3.1. 端口调度模块配置API
+
+`rte_schedule.h`文件包含端口、子端口和管道的配置函数。
+
+## 3.2. 端口调度模块入队（enqueue）API
+
+端口调度模块入队API和DPDK PMD驱动的TX发送函数非常相似。
+
+```c
+int rte_sched_port_enqueue(struct rte_sched_port *port, struct rte_mbuf **pkts, uint32_t n_pkts);
+
+```
+
+## 3.3. 端口调度模块出队（dequeue）API
+
+端口调度模块出队API和DPDK PMD驱动的RX接收函数非常相似。
+
+```c
+int rte_sched_port_dequeue(struct rte_sched_port *port, struct rte_mbuf **pkts, uint32_t n_pkts);
+
+```
+
+## 3.4. 示例
+
+```c
+/* File "application.c" */
+
+#define N_PKTS_RX   64
+#define N_PKTS_TX   48
+#define NIC_RX_PORT 0
+#define NIC_RX_QUEUE 0
+#define NIC_TX_PORT 1
+#define NIC_TX_QUEUE 0
+
+struct rte_sched_port *port = NULL;
+struct rte_mbuf *pkts_rx[N_PKTS_RX], *pkts_tx[N_PKTS_TX];
+uint32_t n_pkts_rx, n_pkts_tx;
+
+/* Initialization */
+
+<initialization code>
+
+/* Runtime */
+while (1) {
+    /* Read packets from NIC RX queue */
+
+    n_pkts_rx = rte_eth_rx_burst(NIC_RX_PORT, NIC_RX_QUEUE, pkts_rx, N_PKTS_RX);
+
+    /* Hierarchical scheduler enqueue */
+
+    rte_sched_port_enqueue(port, pkts_rx, n_pkts_rx);
+
+    /* Hierarchical scheduler dequeue */
+
+    n_pkts_tx = rte_sched_port_dequeue(port, pkts_tx, N_PKTS_TX);
+
+    /* Write packets to NIC TX queue */
+
+    rte_eth_tx_burst(NIC_TX_PORT, NIC_TX_QUEUE, pkts_tx, n_pkts_tx);
+}
+
+```
+
+> _截止到这里介绍了分级调度模块的基本架构，这个模块通过细致定义的分级模型实现了灵活的发包流控，后面会介绍该模块的实现细节_
+
+> DPDK QoS 框架系列：  
+> [DPDK QoS 框架 - 1. 简介](https://www.deepnomind.com/blog/DPDK%20QoS%20%E6%A1%86%E6%9E%B6/%E7%AE%80%E4%BB%8B)
