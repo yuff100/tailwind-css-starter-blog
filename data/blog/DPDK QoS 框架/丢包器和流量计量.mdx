@@ -1,0 +1,325 @@
+---
+title: 'DPDK QoS 框架 - 4. 丢包器和流量计量'
+date: '2021-08-22'
+tags: ['DPDK','架构']
+draft: false
+summary: '因为项目需要做Traffic Shaping，看了下DPDK的QoS框架，做一下简单翻译以加深学习理解。这篇翻译基于DPDK 21.02 版本，介绍了DPDK丢包器的实现机制、算法及相关API，最后介绍了Traffic Metering所使用的算法逻辑。本系列一共4篇文章，这是第四篇。'
+authors: ['default']
+---
+  
+
+> _因为项目需要做Traffic Shaping，看了下DPDK的QoS框架，做一下简单翻译以加深学习理解。这篇翻译基于DPDK 21.02 版本，介绍了DPDK丢包器的实现机制、算法及相关API，最后介绍了Traffic Metering所使用的算法逻辑。本系列一共4篇文章，这是第四篇。原文链接：[DPDK Quality of Service (QoS) Framework](http://doc.dpdk.org/guides-21.02/prog_guide/qos_framework.html)_
+
+# 1. 丢包器
+
+DPDK丢包器的目的是丢弃到达包调度程序的包，以避免拥塞。该机制支持随机早期检测（RED，Random Early Detection），加权随机早期检测（WRED，Weighted Random Early Detection）和尾部丢弃算法（tail drop algorithms）。图1说明了丢包器如何与调度程序集成。DPDK目前不支持拥塞管理，因此丢包器提供了避免拥塞的唯一方法。
+
+![图1：DPDK丢包器的概要框图](https://image.deepnomind.com/blog/image/4b678c412abca09617e6c1e02153773d)
+
+丢包器使用随机早期检测（RED）拥塞控制算法。RED算法的目的是监视包队列，确定队列中当前的拥塞级别，并决定到达的包是否应该进入队列或丢弃。RED算法使用指数加权移动平均（EWMA，Exponential Weighted Moving Average）过滤器来计算平均队列长度，它给出了队列当前拥塞水平的指示。
+
+对于每个入队操作，RED算法将平均队列长度与最小、最大阈值进行比较。根据平均队列长度是否低于、高于或介于这些阈值之间，RED算法计算该报文应该被丢弃的概率，并基于该概率进行随机决策。
+
+丢包器还支持加权随机早期检测（WRED），允许调度程序在运行时为相同的包队列选择不同的RED配置。在严重拥堵的情况下，丢包器采用尾部丢弃算法。当包队列已达到最大容量，不能再存储任何包时，就会发生这种情况。在这种情况下，所有到达的数据包都会被丢弃。
+
+丢包器的处理流程图如图2所示。首先执行RED/WRED算法，然后执行尾部丢弃。
+
+![图2：丢包器处理流程](https://image.deepnomind.com/blog/image/0a9893a8f727a6cffce03c928d62948d)
+
+丢包器支持的用例有：
+
+*   初始化配置数据
+    
+*   初始化运行时数据
+    
+*   入队操作（决定进入队列或丢弃到达的数据包）
+    
+*   标记为空（记录数据包队列变为空的时间）
+    
+
+配置用例将在1.1节中解释，入队操作将在1.2节中解释，标记为空操作将在1.3节中解释。
+
+## 1.1. 配置
+
+RED配置包含下表给出的参数。
+
+_RED配置参数_：
+
+| 参数 | 最小值 | 最大值 | 典型值 |
+| --- | --- | --- | --- |
+| 最小阈值 | 0 | 1022 | 1/4队列长度 |
+| 最大阈值 | 1 | 1023 | 1/2队列长度 |
+| 反标记概率 | 1 | 255 | 10 |
+| EWMA过滤权重 | 1 | 12 | 9 |
+
+这些参数的含义将在下面的章节中详细说明。为丢包器API指定的这些参数的格式与思科在其RED实现中使用的格式相对应。最小阈值和最大阈值参数根据报文数配置给丢包器模块。标记概率参数指定为一个反值，例如标记概率参数的反值为10，对应的标记概率为1/10（即10个包中有1个被丢弃）。
+
+## 1.2. 入队操作
+
+在图3所示的示例中，q（实际队列长度）是输入值，avg（平均队列长度）和count（自上次丢包以来的包数）是运行时值，decision是输出值，其余值是配置参数。
+
+![图3：丢包器数据流示例](https://image.deepnomind.com/blog/image/ad7395a63ef4210809bd791d2ccf8f2d)
+
+### 1.2.1. EWMA过滤器微模块（EWMA Filter Microblock）
+
+EWMA过滤器微模块的目的是过滤队列长度，以平滑由“突发”流量导致的瞬态变化。输出值是平均队列长度，它提供了队列中当前拥塞级别的更稳定视图。
+
+EWMA过滤器有一个配置参数，即过滤器权重，它决定平均队列长度输出响应实际队列长度输入变化的快慢程度。过滤器权重值越大，平均队列长度对实际队列长度的变化响应越快。
+
+#### 1.2.1.1. 当队列非空时平均队列长度的计算
+
+EWMA过滤器的定义如下式所示。
+
+![](https://image.deepnomind.com/blog/image/7932e0f3124330c14ee5898b1b7556b8)
+
+定义：
+
+*   avg = 平均队列长度
+    
+*   wq = 过滤权重
+    
+*   q = 实际队列长度
+    
+
+> 注：过滤器权重，wq = 1/2^n，其中n是传递给丢包器模块的过滤器权重参数值，在1.1节介绍的配置参数中配置。
+
+### 1.2.2. 当队列为空时平均队列长度的计算
+
+EWMA过滤器不读取时间戳，而是假设入队操作将相当有规律的发生。当队列变为空时，需要进行特殊处理，因为队列可能短时间为空，也可能长时间为空。当队列变为空时，平均队列大小应该逐渐下降到零，而不是突然下降到零或在最后计算值的地方保持停滞状态。当一个数据包进入一个空队列时，平均队列大小使用以下公式计算：
+
+![](https://image.deepnomind.com/blog/image/5a09ce69affbad51acac289c842cfa43)
+
+定义：
+
+*   m = 当队列为空时，该队列上可能发生的排队操作数
+    
+
+在丢包器模块中，m定义为：
+
+![](https://image.deepnomind.com/blog/image/1e9ea62f28154f2153427f9aa0057a19)
+
+定义：
+
+*   time = 当前时间
+    
+*   qtime = 队列为空的时间
+    
+*   s = 在此队列上进行连续的入队操作之间的典型间隔时间
+    
+
+时间引用以字节为单位，其中字节表示物理接口在传输介质上发送一个字节所需的时间（参见内部时间引用部分）。参数s在丢包器模块中定义为一个常量，值为：s=2^22。这对应于具有64K叶子节点的层次结构中的每个叶子节点将一个64字节数据包传输到线路上所需的时间，并表示为最差的情况。对于小得多的调度器层次结构，可能需要减少参数s，该参数定义在RED头源文件（`rte_red.h`）中：
+
+```c
+#define RTE_RED_S
+```
+
+由于时间引用以字节为单位，端口速度隐含在表达式time-qtime中。丢包器不需要配置端口的实际速率，它会自动适配低速或者高速链路。
+
+#### 1.2.2.1. 实现
+
+使用数值方法计算公式2中出现的因子(1-wq)^m。
+
+该方法基于以下恒等式：
+
+![](https://image.deepnomind.com/blog/image/6c0d7baec235059ed98d465f5e2b5303)
+
+这让我们可以表达以下内容：
+
+![](https://image.deepnomind.com/blog/image/c8e4baea98fe0a8db755251870c548ec)
+
+在丢包器模块中，使用查询表为每个wq值计算log2(1-wq)。然后通过将该值乘以m并进行移位操作得到因子(1-wq)m。为了避免乘法溢出，值m和查找表的值被限制为16位。查找表的总大小是56字节。一旦通过该方法得到因子(1-wq)m，则平均队列大小可由式2计算。
+
+#### 1.2.2.2. 替代方案
+
+下面介绍其他计算表达式中的因子(1-wq)^m的方法，从而用于计算空队列时的平均队列大小（公式2）。这些方法包括：
+
+*   浮点数计算
+    
+*   使用小查询表（512B）和多达16次乘法的定点数计算（这是FreeBSD\* ALTQ RED实现中使用的方法）
+    
+*   使用小查询表（512B）和16个SSE乘法的定点数计算（FreeBSD\* ALTQ RED实现中使用的SSE方法的优化版本）
+    
+*   大查询表（76KB）
+    
+
+最终选定的方案（上文1.2.2.1节所述）在运行时性能和内存需求方面优于所有这些方案，并获得了与浮点计算相当的精度。下表列出了每一种替代方法相对于丢包器中使用的方法的性能。可以看出，浮点实现的性能最差。
+
+_替代方法的相对性能_：
+
+| 方案 | 相对性能 |
+| --- | --- |
+| 当前丢包器方案（参考1.2.2.1节） | 100% |
+| 使用小查询表（512B）的定点方案 | 148% |
+| 使用小查询表（512B）的SSE方案 | 114% |
+| 大查询表（76KB）方案 | 118% |
+| 浮点数方案 | 595% |
+| 注：在这种情况下，由于性能表示为在特定条件下执行操作所花费的时间，任何高于100%的相对性能值都比引用方法运行得更慢。 |
+
+### 1.2.3. 丢包决策模块
+
+丢包决策模块：
+
+*   比较平均队列长度和最小、最大阈值
+    
+*   计算丢包概率
+    
+*   随机决定是否将到达的数据包放入队列或丢弃
+    
+
+丢包概率的计算分两个阶段进行。基于平均队列长度、最小和最大阈值以及标记概率计算初始丢弃概率。从初始丢弃概率计算实际丢弃概率。实际丢弃概率考虑了运行时计数值，因此如果在丢弃了最后一个包后，有更多的包到达队列，实际丢弃概率会随之升高。
+
+#### 1.2.3.1. 初始丢包概率
+
+初始丢包概率基于下面的公式计算。
+
+![](https://image.deepnomind.com/blog/image/65d203be8119b3218050140ba0e66864)
+
+定义：
+
+*   maxp = 标记概率
+    
+*   avg = 平均队列长度
+    
+*   minth = 最小阈值
+    
+*   maxth = 最大阈值
+    
+
+利用公式3计算丢包概率如图4所示。如果平均队列长度低于最小阈值，则到达的数据包进入队列。如果平均队列长度大于或等于最大阈值，则到达的报文将被丢弃。如果平均队列长度介于最小和最大阈值之间，则计算丢弃概率以确定数据包是否应该进入队列或丢弃。
+
+![给定RED配置，计算丢包概率](https://image.deepnomind.com/blog/image/79a25431c5a3b2157626d282c1397be5)
+
+#### 1.2.3.2. 实际丢包概率
+
+如果平均队列长度在最小和最大阈值之间，则实际的丢包概率由下式计算。
+
+![](https://image.deepnomind.com/blog/image/9ea0299e16fb26412fd4c11495becf50)
+
+定义：
+
+*   Pb = 初始丢包概率（计算自方程3）
+    
+*   count = 上次丢包后收到的数据包数量
+    
+
+公式4中的常数2是与参考文档中给出的丢弃概率公式的唯一偏差，其中使用的值为1。需要注意的是，pa的值可以是负数，也可以大于1。如果发生这种情况，那么应该使用值1。
+
+初始概率和实际概率如图5所示。实际丢弃概率分别显示了使用常数1（蓝色曲线）和常数2（红色曲线）的情况。与用户指定的标记概率配置参数相比，参考文档中的公式（常数1）导致了明显更高的丢包率。选择偏离参考文档只是一个设计决策，其他RED实现也采取了这种做法，例如FreeBSD\* ALTQ RED。
+
+![使用因子1(蓝色曲线)和因子2(红色曲线)计算的初始丢包概率(pb)，实际丢包概率(pa)](https://image.deepnomind.com/blog/image/25787d30352b0e8e5b558dde5030fcb7)
+
+## 1.3. 空队列操作
+
+队列变为空的时间必须保存在RED运行时数据记录中，这样EWMA过滤器就可以在下一次入队操作时正确计算平均队列长度。当队列变为空时，应用程序负责调用API通知丢包器模块。
+
+## 1.4. 源代码路径
+
+DPDK丢包器源代码：
+
+*   `DPDK/lib/librte_sched/rte_red.h`
+    
+*   `DPDK/lib/librte_sched/rte_red.c`
+    
+
+## 1.5. 与DPDK QoS 调度器集成
+
+默认情况下，DPDK QoS调度程序中的RED功能是禁用的。该参数在DPDK/config目录下的构建配置文件中可以找到。RED配置参数在rte_sched_port_params结构中的rte_red_params结构中指定，rte_sched_port_params结构在初始化时传递给调度器。RED参数可以为四类流量和三种包颜色（绿色、黄色和红色）分别配置，从而允许调度程序实现加权随机早期检测（WRED）。
+
+## 1.6. 与DPDK QoS 调度器集成示例
+
+DPDK QoS调度程序应用程序在启动时读取配置文件。配置文件包含了RED参数的配置。这些参数的格式见1.1节。下面显示了一个RED配置示例。在本例中，队列大小为64个包。
+
+> 注：为了正确操作，同一流量组（TC）中的每个包颜色（绿、黄、红）应使用相同的EWMA滤波权重参数（wred weight）。
+
+```
+; RED params per traffic class and color (Green / Yellow / Red)
+[red]tc 0 wred min = 28 22 16tc 0 wred max = 32 32 32tc 0 wred inv prob = 10 10 10tc 0 wred weight = 9 9 9
+tc 1 wred min = 28 22 16tc 1 wred max = 32 32 32tc 1 wred inv prob = 10 10 10tc 1 wred weight = 9 9 9
+tc 2 wred min = 28 22 16tc 2 wred max = 32 32 32tc 2 wred inv prob = 10 10 10tc 2 wred weight = 9 9 9
+tc 3 wred min = 28 22 16tc 3 wred max = 32 32 32tc 3 wred inv prob = 10 10 10tc 3 wred weight = 9 9 9
+tc 4 wred min = 28 22 16tc 4 wred max = 32 32 32tc 4 wred inv prob = 10 10 10tc 4 wred weight = 9 9 9
+tc 5 wred min = 28 22 16tc 5 wred max = 32 32 32tc 5 wred inv prob = 10 10 10tc 5 wred weight = 9 9 9
+tc 6 wred min = 28 22 16tc 6 wred max = 32 32 32tc 6 wred inv prob = 10 10 10tc 6 wred weight = 9 9 9
+tc 7 wred min = 28 22 16tc 7 wred max = 32 32 32tc 7 wred inv prob = 10 10 10tc 7 wred weight = 9 9 9
+tc 8 wred min = 28 22 16tc 8 wred max = 32 32 32tc 8 wred inv prob = 10 10 10tc 8 wred weight = 9 9 9
+tc 9 wred min = 28 22 16tc 9 wred max = 32 32 32tc 9 wred inv prob = 10 10 10tc 9 wred weight = 9 9 9
+tc 10 wred min = 28 22 16tc 10 wred max = 32 32 32tc 10 wred inv prob = 10 10 10tc 10 wred weight = 9 9 9
+tc 11 wred min = 28 22 16tc 11 wred max = 32 32 32tc 11 wred inv prob = 10 10 10tc 11 wred weight = 9 9 9
+tc 12 wred min = 28 22 16tc 12 wred max = 32 32 32tc 12 wred inv prob = 10 10 10tc 12 wred weight = 9 9 9
+```
+
+通过该配置文件，TC 0中绿色、黄色和红色报文的RED配置如下表所示。  
+
+_对应于RED配置文件的RED配置：_
+
+| RED参数 | 配置项 | Green | Yellow | Red |
+| --- | --- | --- | --- | --- |
+| 最小阈值 | tc 0 wred min | 28 | 22 | 16 |
+| 最大阈值 | tc 0 wred max | 32 | 32 | 32 |
+| 标记概率 | tc 0 wred inv prob | 10 | 10 | 10 |
+| EWMA过滤权重 | tc 0 wred weight | 9 | 9 | 9 |
+
+## 1.7. API
+
+### 1.7.1. 入队操作API
+
+入队操作API语法如下：
+
+```c
+int rte_red_enqueue(const struct rte_red_config *red_cfg, struct rte_red *red, const unsigned q, const uint64_t time)
+```
+
+入队操作API的参数是配置数据、运行时数据、包队列的当前大小（以包为单位）和表示当前时间的值。时间引用以字节为单位，表示物理接口在传输介质上发送一个字节所需的时间（参见“内部时间引用”章节）。出于性能考虑，丢包器重用调度程序的时间戳。  
+
+### 1.7.2. 标识空队列API
+
+标识空队列API语法如下：
+
+```c
+void rte_red_mark_queue_empty(struct rte_red *red, const uint64_t time)
+```
+
+标识空队列API的参数是以字节为单位的运行时数据和当前时间。  
+
+# 2. 流量计量（Traffic Metering）
+
+流量计量组件实现了IETF RFC 2697和2698定义的单速率三色标记（srTCM，Single Rate Three Color Marker）和双速率三色标记（trTCM，Two Rate Three Color Marker）算法。这些算法基于为每个流预先定义好的可接受的流量值来对进入的数据包进行流量测量。因此，每个进入的报文都会根据所监控的报文所属的流量被标记为绿色、黄色或红色。
+
+## 2.1. 概览
+
+srTCM算法为每条流定义了两个令牌桶，两个令牌桶共享相同的令牌更新速率：
+
+*   Committed（C）桶：以承诺信息速率（Committed Information Rate，CIR）参数定义的速率（以每秒IP数据包字节数为单位）对令牌桶进行回填。C桶的大小由承诺突发大小（Committed Burst Size，CBS）参数定义(以字节为单位)；
+    
+*   Excess（E）桶：以与C桶相同的速率对令牌桶进行回填。E桶的大小是由过量突发大小（Excess Burst Size，EBS）参数定义的（以字节为单位）。
+    
+
+trTCM算法为每个流定义了两个令牌桶，两个令牌桶以独立的速率更新：
+
+*   Committed（C）桶：以承诺信息速率（Committed Information Rate，CIR）参数定义的速率（以每秒IP数据包字节数为单位）对令牌桶进行回填。C桶的大小由承诺突发大小（Committed Burst Size，CBS）参数定义（以字节为单位）；
+    
+*   Peak（P）桶：以峰值信息速率（Peak Information Rate，PIR）参数定义的速率（以每秒IP数据包字节数为单位）对令牌桶进行回填。P桶的大小由峰值突发大小（Peak Burst Size，PBS）参数定义（以字节为单位）。
+    
+
+请参阅RFC 2697（srTCM）和RFC 2698（trTCM），了解如何从桶中消费令牌以及如何确定包颜色的详细信息。
+
+### 2.1.1. 色盲和颜色感知模式（Color Blind and Color Aware Modes）
+
+对于这两种算法，色盲模式在功能上等价于输入颜色集为绿色的颜色感知模式。对于颜色感知模式，输入颜色为红色的数据包只能得到红色的输出颜色，而输入颜色为黄色的数据包只能得到黄色或红色的输出颜色。
+
+色盲模式的实现需要的操作更少，因此和颜色感知模式相比更简单清晰。
+
+## 2.2. 实现概述
+
+对于每个输入数据包，srTCM / trTCM算法的步骤如下：
+
+*   更新C和E / P令牌桶。通过读取当前时间（来自CPU时间戳计数器）、标识自上次桶更新以来的时间量并计算相关的令牌数量（根据预先配置的桶速率）来实现。桶中令牌的数量受预配置的桶大小的限制；
+    
+*   根据IP包大小和C、E / P桶中当前可用令牌的数量，确定当前包的输出颜色；对于颜色感知模式，还需要考虑数据包的输入颜色。当输出颜色不是红色时，根据算法和包的输出颜色，将从C或E / P桶中减去与IP包长度相等的令牌数量。
+    
+
+
+> DPDK QoS 框架系列：  
+> [DPDK QoS 框架 - 1. 简介](https://www.deepnomind.com/blog/DPDK%20QoS%20%E6%A1%86%E6%9E%B6/%E7%AE%80%E4%BB%8B)  
+> [DPDK QoS 框架 - 2. 分级调度模块介绍](https://www.deepnomind.com/blog/DPDK%20QoS%20%E6%A1%86%E6%9E%B6/%E5%88%86%E7%BA%A7%E8%B0%83%E5%BA%A6%E6%A8%A1%E5%9D%97%E4%BB%8B%E7%BB%8D)  
+> [DPDK QoS 框架 - 3. 分级调度模块的实现](https://www.deepnomind.com/blog/DPDK%20QoS%20%E6%A1%86%E6%9E%B6/%E5%88%86%E7%BA%A7%E8%B0%83%E5%BA%A6%E6%A8%A1%E5%9D%97%E7%9A%84%E5%AE%9E%E7%8E%B0)
