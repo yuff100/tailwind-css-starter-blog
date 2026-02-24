@@ -36,6 +36,12 @@ const projectsData: Project[] = [
     imgSrc: '/static/images/learn-opencode.png',
     href: 'https://learn-opencode.deepnomind.com/',
   },
+  {
+    title: '智能发票处理系统 Demo',
+    description: '基于AI技术的无服务器发票管理工具，支持自动识别、数据提取和OA系统集成。',
+    imgSrc: '/static/images/invoice-ai.png',
+    href: 'https://invoice-ai.deepnomind.com/',
+  },
 ]
 
 export default projectsData
