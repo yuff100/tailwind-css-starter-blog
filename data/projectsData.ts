@@ -42,6 +42,12 @@ const projectsData: Project[] = [
     imgSrc: '/static/images/invoice-ai.png',
     href: 'https://invoice-ai.deepnomind.com/',
   },
+  {
+    title: 'BadmintonAI - 羽毛球动作分析AI教练 Demo',
+    description: '基于AI技术的羽毛球动作分析AI教练，提供智能化的训练建议和动作分析。',
+    imgSrc: '/static/images/badminton-ai.png',
+    href: 'https://github.com/yuff100/BadmintonAI',
+  },
 ]
 
 export default projectsData
