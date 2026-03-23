@@ -48,6 +48,12 @@ const projectsData: Project[] = [
     imgSrc: '/static/images/badminton-ai.png',
     href: 'https://github.com/yuff100/BadmintonAI',
   },
+  {
+    title: '智能货代邮件自动化处理平台 Demo',
+    description: '基于AI技术的智能货代邮件自动化处理平台，支持自动分类、回复和数据提取。',
+    imgSrc: '/static/images/FreightBot.png',
+    href: 'https://github.com/yuff100/FreightBot',
+  }
 ]
 
 export default projectsData
