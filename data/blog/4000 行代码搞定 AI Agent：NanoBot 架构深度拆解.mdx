@@ -1,0 +1,496 @@
+---
+title: '4000 行代码搞定 AI Agent：NanoBot 架构深度拆解'
+date: '2026-03-26'
+tags: ['人工智能','架构']
+draft: false
+summary: '本文深度拆解了 NanoBot，仅用 4000 行代码实现了完整的 AI Agent 能力，讲解了其最小化架构设计思路，告诉你如何构建真正可控、可读、可改的 AI Agent。'
+---
+
+>*本文深度拆解了 NanoBot，仅用 4000 行代码实现了完整的 AI Agent 能力，讲解了其最小化架构设计思路，告诉你如何构建真正可控、可读、可改的 AI Agent。原文：[How to Learn Anything Faster With AI (6 Practical Workflows I Use Every Day)](https://medium.com/@nitinfab/how-to-learn-anything-faster-with-ai-6-practical-workflows-i-use-every-day-e4144a112eb1)*
+
+![](https://image.deepnomind.com/blog/image/a7b6d8baeb9b2fc2cc8221e7f9bff784)
+
+当 43 万行代码对阵 4000 行代码时，一个问题自然而然浮现：删掉了什么？保留了什么？
+
+本文是纯架构拆解。没有部署指南，也没有开箱即用的演示。我们来剖析 NanoBot 如何用最小骨架运行 Agent，并保证代码可读、可修改、可管控。
+
+NanoBot 仓库地址：[https://github.com/HKUDS/nanobot](https://github.com/HKUDS/nanobot)
+
+# 为什么重要：能力之上，可控先行
+
+很多人想要"能用的 Agent"，但又害怕变成黑盒 —— 不知道工具何时被调用，哪些文件被修改，也不知道执行为什么突然跑偏。
+
+NanoBot 采用了直截了当的方案：先把 Agent 构建为最小可行运行时。消息到达 → 上下文组装 → LLM 决策 → 工具执行 → 结果回填 → 返回响应。
+
+追求三个目标：
+
+- 能通读整条端到端流水线（代码库足够小）
+- 能精确定位问题发生的位置（边界清晰）
+- 可以安全的逐步增量添加能力（组件可替换）
+
+# 结论
+
+NanoBot 的工作是以工程为中心：将 Agent 分解为流水线，用 MessageBus 解耦，用 AgentLoop 驱动核心循环，通过 Cron/Heartbeat 实现主动性。
+
+最值得学习的不是"连接了 Telegram/WhatsApp/Slack"，而是这个最小骨架：
+
+- 入口：Channels 将不同 IM 消息统一为 InboundMessage
+- 枢纽：MessageBus 解耦了"接收消息"和"生成响应"
+- 核心：AgentLoop 驱动 LLM ↔ 工具循环
+- 上下文：ContextBuilder 将规则/人格/工具描述/技能/记忆组装到系统提示词中
+- 可扩展性：ToolRegistry + JSON Schema 验证将工具变为可注册、可验证的插件
+- 主动性：Cron 处理定时任务，Heartbeat 处理周期性唤醒
+
+如果想构建可控 Agent，这个结构让你以最小成本闭合循环，然后逐步添加多模型路由、更强的记忆检索、更严格的权限边界和更可靠的审计回放。
+
+# 对比：OpenClaw 给你成品，NanoBot 给你骨架
+
+如果你研究过 OpenClaw，就能感觉到定位差异。这里有个清晰的对比：
+
+OpenClaw 更像"生产就绪产品"，NanoBot 更像"用于学习和复刻的最小运行时"。
+
+# TL;DR
+
+- NanoBot 将 Agent 精简到最基础的循环：消息 → 上下文 → LLM → 工具 → 回填 → 响应
+- 用 MessageBus 解耦：Channels 只负责收发，AgentLoop 只负责"思考和执行"
+- AgentLoop 是标准的"工具调用循环"：LLM 给出工具调用，逐个执行，将结果作为工具消息回填，LLM 继续推理
+- ContextBuilder 的核心是基于文件的设计：AGENTS/SOUL/USER/TOOLS/IDENTITY + memory 目录都是可版本控制的可信源
+- 工具系统不是散落的 if-else：ToolRegistry 统一注册，工具参数使用 JSON Schema 验证，错误被收敛为可读字符串
+- exec 工具拥有粗粒度安全护栏（危险命令正则拦截 + 可选工作空间限制），但生产环境仍需要允许列表和审计
+- 会话使用 JSONL 保存对话历史（易读、易回放），但默认存储在 `~/.nanobot/sessions`，而非项目工作区
+- Cron/Heartbeat 解决了"没人说话时 Agent 也能做事"的问题，本质上为 AgentLoop 提供定时触发
+- README 说"约 4000 行"，实际 nanobot/ 目录总计约 5k 行；差异来自桥接、通道、cron、工具和外围组件的统计口径
+
+# 01 | 正确分类：NanoBot 究竟是什么
+
+把 NanoBot 叫做"聊天机器人"低估了它。
+
+更准确的工程描述是：运行在本地机器上的 Agent 运行时。
+
+它将"对话"升级为"可执行工作流入口"：
+
+- 你从 Telegram/WhatsApp/Slack 发送消息
+- LLM 首先决定"是否要调用工具，调用哪个，传什么参数"
+- 工具在本地/受控环境中执行（读写文件、运行命令、网页抓取等）
+- 结果回填给 LLM
+- 最终答案返回原聊天窗口
+
+一旦稳定了这条流水线，其他一切都是增量添加的。
+
+# 02 | 架构概览：一张图展示数据流
+
+![](https://image.deepnomind.com/blog/image/311902515cba21610f3a01203810b37a)
+
+重点不在于漂亮的图片，而在于每个框都对应仓库中真实的文件：
+
+- `nanobot/channels/*`: 通道适配器和启动逻辑
+- `nanobot/bus/*`: 消息事件和队列
+- `nanobot/agent/loop.py`: 核心循环
+- `nanobot/agent/context.py`: 系统提示词组装
+- `nanobot/agent/tools/*`: 工具系统
+- `nanobot/cron/* + nanobot/heartbeat/*`: 调度和心跳
+
+# 03 | 核心循环：LLM 不"做事" —— 只决定"要做什么"
+
+AgentLoop 的逻辑是教科书级的：
+
+1.  从入队队列拉取一条消息
+2.  获取/创建会话，从历史中获取最近 N 条消息
+3.  使用 ContextBuilder 组装系统提示词，然后将历史 + 当前消息打包成消息列表
+4.  调用 LLM（将工具定义作为函数 schema 传给模型）
+5.  如果模型返回工具调用：逐个执行，将工具结果作为工具角色消息回填，继续下一轮
+6.  如果模型停止调用工具：获取最终内容，写入会话，发送到出队队列
+
+其价值在于："思考"和"执行"明确分离。
+
+- LLM 只输出结构化工具调用
+- 工具处理执行
+- 结果回填
+- LLM 基于"真实结果"继续推理
+
+这比"让模型通过想象执行结果"强太多了。
+
+关键消息格式：
+
+```python
+messages = [system_prompt] + history + [user_message]
+assistant -> tool_calls[]  # 决定要做什么
+tool_results -> messages   # 将真实执行结果反馈回去
+```
+
+在这个循环中，最重要的不是"更多工具"，而是"工具调用证据链"：
+
+- 你能看到模型是如何决策的（消息中的工具调用）
+- 你能看到工具返回了什么（消息中的工具结果）
+- 你能明白最终响应为什么是这样（它基于这些证据）
+
+这就是可控性的基础：所有关键动作都可以在上下文中回放。
+
+两个影响稳定性的实现细节：
+
+- 上限：max_iterations 默认是 20，防止模型进入工具调用死循环
+- 历史存储：Session 使用 JSONL 格式写入 `~/.nanobot/sessions`，第一行是元数据，后续行是独立消息；对调试和回放非常友好
+
+##### 03.1 | MessageBus：为什么要加一层队列
+
+很多 Agent 开发者把"接收消息"和"处理消息"混在一起。问题在于：
+
+- 不同通道有不同消息格式（Telegram 有语音，WhatsApp 有媒体，Slack 有 @提及）
+- 处理逻辑需要串行控制（否则会话状态会损坏）
+- 当你需要可观测性（日志、审计）时，没有地方插入
+
+NanoBot 的 MessageBus 有两个队列：
+
+```python
+self.inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
+self.outbound: asyncio.Queue[OutboundMessage] = asyncio.Queue()
+```
+
+Channels 将各种格式的消息统一为 InboundMessage，扔进入队队列。AgentLoop 从队列拉取处理，将 OutboundMessage 扔进出队队列。ChannelManager 订阅出队队列，按通道分发回去。
+
+这个设计的好处：
+
+- Channels 不需要知道 Agent 如何工作
+- AgentLoop 不需要知道消息来自哪里
+- 想要添加审计、限流、优先级？在队列层添加即可
+
+##### 03.2 | 子代理生成：从主会话中分离复杂任务
+
+NanoBot 有一个实用但容易被忽略的能力：spawn（生成子代理）。
+
+没有"多智能体"那么复杂；方法非常直接：
+
+- 主 Agent 接收到任务，发现太长或太复杂
+- 使用 spawn 拉起一个子代理处理特定隔离工作（比如"先读完这一批文件，生成结构化摘要"）
+- 子代理完成后，通过 MessageBus 将结果作为系统消息返回给主 Agent
+- 主 Agent 为用户更自然的总结结果
+
+SubagentManager 的关键限制：
+
+```python
+# 子代理没有消息工具，没有生成工具
+tools.register(ReadFileTool())
+tools.register(WriteFileTool())
+tools.register(ListDirTool())
+tools.register(ExecTool(...))
+tools.register(WebSearchTool(...))
+tools.register(WebFetchTool())
+```
+
+这就是设计价值：子代理工具更少，权限更小，目标更聚焦 —— 不会变成第二个全能黑盒。
+
+##### 03.3 | Gateway：同时启动 AgentLoop、Channels、Cron、Heartbeat
+
+当你运行 `nanobot gateway`，不只是"启动一个机器人"。
+
+它在同一个进程中拉起四个组件：
+
+- AgentLoop：消费入队，生成出队
+- ChannelManager：按配置启动 Telegram/WhatsApp/Slack，处理出队分发
+- CronService：从 `~/.nanobot/cron/jobs.json` 读写定时任务，按计划触发 Agent
+- HeartbeatService：默认每 30 分钟唤醒一次，让 Agent 读取 HEARTBEAT.md 检查待处理任务
+
+这就是为什么我称它为最小运行时：它将"持续运行"作为架构的一部分。
+
+# 04 | ContextBuilder：为什么它也像 OpenClaw 一样使用一堆 Markdown 文件
+
+你会在工作区看到一组熟悉的文件：
+
+- `AGENTS.md`: 工作规范（如何做事）
+- `SOUL.md`: 人格/价值观/边界（如何说话，如何选择）
+- `USER.md`: 用户偏好（你是谁，关心什么）
+- `TOOLS.md`: 工具描述（有什么能力，如何调用）
+- `IDENTITY.md`: 身份（名称，风格）
+- `memory/`: 每日笔记 + 长期信息
+
+ContextBuilder 的工作就是：将这些"可信源"组装成系统提示词：
+
+```python
+BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
+
+def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
+    parts = []
+    parts.append(self._get_identity())
+    bootstrap = self._load_bootstrap_files()
+    if bootstrap:
+        parts.append(bootstrap)
+    memory = self.memory.get_memory_context()
+    if memory:
+        parts.append(f"# Memory\n\n{memory}")
+    # ...
+    return "\n\n---\n\n".join(parts)
+```
+
+这种基于文件的方法的好处是：
+
+- 规则可版本控制：Git 能追踪"这个边界是什么时候添加的"
+- 上下文可控：想要 Agent 更克制？编辑 SOUL。想要工具更稳定？编辑 TOOLS。想要它更懂你？编辑 USER
+- 连续性不依赖对话：对话丢了不是致命问题，文件还在
+
+我喜欢用一句话来理解：文本胜过大脑。
+
+##### 04.1 | SkillsLoader：渐进式技能加载
+
+NanoBot 的技能系统有一个设计点值得一提：不是所有技能都一次性塞进系统提示词。
+
+```python
+def build_skills_summary(self) -> str:
+    # 只返回技能名称/描述/位置
+    # Agent 需要时用 read_file 读取完整内容
+```
+
+这解决了一个真实问题：技能太多会炸掉系统提示词。
+
+它的方案：
+
+1.  `always=true` 的技能：直接进入系统提示词
+2.  其他技能：只给 Agent 展示摘要（名称 + 描述 + 路径）
+3.  当 Agent 需要时：自己用 read_file 读取完整内容
+
+这就是"渐进式加载"：让 Agent 按需获取，而不是提前把所有东西都给出去。
+
+##### 04.2 | MemoryStore：记事本级别的记忆
+
+MemoryStore 做两件事：
+
+- 每日笔记：`memory/YYYY-MM-DD.md`，一天一个文件
+- 长期记忆：`memory/MEMORY.md`，手动维护的持久化信息
+
+```python
+def get_memory_context(self) -> str:
+    parts = []
+    long_term = self.read_long_term()
+    if long_term:
+        parts.append("## Long-term Memory\n" + long_term)
+    today = self.read_today()
+    if today:
+        parts.append("## Today's Notes\n" + today)
+    return "\n\n".join(parts) if parts else ""
+```
+
+它满足了"让 Agent 记住你告诉它的东西"这个基本需求。
+
+但距离"可检索的长期记忆"还有差距，路线图也将长期记忆列为待完成工作。
+
+# 05 | 工具系统：为什么"可控 Agent "离不开 ToolRegistry + 参数验证
+
+很多 Agent 开发者最后工具越来越乱，最终变成：
+
+- 一堆散落的函数
+- 一堆"如果模型说了某个关键词就执行"
+- 一堆基于约定的参数格式
+
+NanoBot 的工具系统有两点做对了：
+
+1. 工具是"注册式"，不是"松散脚本"。
+
+ToolRegistry 统一注册，把所有工具定义打包成给模型的函数 schema。
+
+```python
+def _register_default_tools(self) -> None:
+    self.tools.register(ReadFileTool())
+    self.tools.register(WriteFileTool())
+    self.tools.register(EditFileTool())
+    self.tools.register(ListDirTool())
+    self.tools.register(ExecTool(...))
+    self.tools.register(WebSearchTool(...))
+    self.tools.register(WebFetchTool())
+    self.tools.register(MessageTool(...))
+    self.tools.register(SpawnTool(...))
+```
+
+AgentLoop 不需要知道"有哪些工具"，只需要知道"所有工具长得都一样"：名称/描述/参数/执行。
+
+2. 参数使用 JSON Schema 验证，失败也可读
+
+工具基类有 `validate_params()`，按照 schema 检查类型、必填字段、枚举、最大最小值等。
+
+这对稳定性至关重要：
+
+- 当模型输出错误参数时，不会用异常炸掉整个循环
+- 将错误收敛为可读文本，反馈给模型进行修正
+- 你能在日志中看到"哪个字段错了"
+
+##### 05.1 | web_fetch 返回 JSON，不是"文章正文"
+
+为了避免你以为它是"随便写的爬虫"，这里有两个细节：
+
+1.  web_search 使用 Brave Search API，需要 `tools.web.search.apiKey`（或环境变量 `BRAVE_API_KEY`）
+2.  web_fetch 返回值是 JSON 字符串，包含 finalUrl、status、extractor、truncated、text 等字段
+
+这对 Agent 很关键。因为模型需要的不只是"正文"，它需要知道"这次抓取实际得到了什么，是否被截断，是否重定向到另一个域名"。
+
+这就是我喜欢的风格：工具输出尽可能结构化，让模型读取"可验证的证据"而非随机文本。
+
+##### 05.2 | LiteLLM Provider：简单的多模型路由实现
+
+NanoBot 使用 LiteLLM 进行多模型路由：
+
+```ruby
+class LiteLLMProvider(LLMProvider):
+    def __init__(self, api_key, api_base, default_model="anthropic/claude-opus-4-5"):
+        # 根据 api_key 前缀判断提供商
+        self.is_openrouter = api_key and api_key.startswith("sk-or-v1")
+        self.is_vllm = bool(api_base) and not self.is_openrouter
+```
+
+支持的提供商：
+
+- OpenRouter（推荐，可访问所有模型）
+- Anthropic / OpenAI / DeepSeek / Gemini / Groq（直连）
+- vLLM（本地模型）
+
+配置很简单：
+
+```json
+{
+  "providers": {
+    "openrouter": { "apiKey": "sk-or-v1-xxx" }
+  },
+  "agents": {
+    "defaults": { "model": "anthropic/claude-opus-4-5" }
+  }
+}
+```
+
+本地模型配置：
+
+```json
+{
+  "providers": {
+    "vllm": {
+      "apiKey": "dummy",
+      "apiBase": "http://localhost:8000/v1"
+    }
+  },
+  "agents": {
+    "defaults": { "model": "meta-llama/Llama-3.1-8B-Instant" }
+  }
+}
+```
+
+# 06 | 主动性：Cron 和 Heartbeat 是两种不同的"唤醒方式"
+
+很多 Agent 在一点上体验很差：它们只等着你发消息。
+
+NanoBot 使用两种机制：
+
+##### Cron：显式定时任务
+
+CronService 管理任务，时间到了给 Agent 发一条"类似用户输入"的消息（走一轮 Agent 流程），然后可选择将结果投递到指定通道。
+
+你可以把它理解为：产品化的"提醒/例行检查"。
+
+```bash
+# 添加任务
+nanobot cron add --name "daily" --message "Good morning!" --cron "0 9 * * *"
+
+# 列出任务
+nanobot cron list
+
+# 删除任务
+nanobot cron remove <job_id>
+```
+
+##### Heartbeat：轻量级周期性唤醒
+
+HeartbeatService 每 30 分钟触发一次，但不强制任务 —— Agent 自己读取 HEARTBEAT.md：
+
+- 如果文件里什么都没有，什么也不做
+- 如果有待处理项，按照检查列表执行
+
+我非常喜欢这个设计：让主动性变成一个"非常廉价的接口"，不需要重新发明复杂的工作流 DSL。
+
+##### 06.1 | Channels：更多入口，更严边界
+
+从架构角度看，Channels 的意义不是"连接几个聊天应用"，而是把"入口不确定性"挡在门外。
+
+典型的不确定性：
+
+- Telegram 可能有语音（还要转写）
+- WhatsApp 需要桥接（Node 桥）
+- Slack 使用长连接（WebSocket）
+- 不同通道的 sender_id、chat_id 语义不一致
+
+NanoBot 的处理方式：不跟入口纠缠，统一成 InboundMessage / OutboundMessage。
+
+需要注意的是配置层的 `allowFrom` 字段。入口越多，越容易发生"没打算响应的人也得到了响应"的意外。
+
+如果 `allowFrom` 为空，BaseChannel 逻辑默认开放。
+
+如果真的部署给团队使用，建议把"谁允许触发"设为硬门槛，而不是随便配置一下。
+
+##### 06.2 | 三个通道的工程细节
+
+**Telegram**
+
+- 长轮询，不需要公开 webhook
+- 下载的图片/语音/文件存在 `~/.nanobot/media`
+- 语音转写是可选的：配置 Groq API 密钥后，使用 Whisper 转换为文本，再喂给 Agent
+- 发送消息时，将 Markdown 转换为 Telegram 安全的 HTML，失败则降级为纯文本
+
+**WhatsApp**
+
+- Python 端不直接实现协议，通过 WebSocket 连接到 Node.js 桥接
+- 桥接使用 @whiskeysockets/baileys（WhatsApp Web 协议 —— 实际的麻烦都在这里）
+- 语音消息目前不支持从桥接端直接下载和转写
+
+**Slack**
+
+- 使用 WebSocket 长连接，更适合企业系统集成
+- 有 message_id 去重缓存，超过阈值时修剪，避免重复处理
+- 收到消息后给出反应（类似"已读/已处理"信号），然后转发给 AgentLoop
+
+这三块的细节说明了一个事实：通道不是"适配完完事"，而是迫使你补全可靠性、权限边界和可观测性。
+
+# 07 | 最值得借鉴的是什么，需要注意什么
+
+**值得借鉴：4 点**
+
+1.  消息总线解耦：Channels 和 AgentLoop 之间只有 Inbound/OutboundMessage
+2.  清晰的工具循环：工具调用生命周期（调用 → 执行 → 结果 → 继续）在一个文件中可读
+3.  基于文件的上下文：工作区 Markdown 承载稳定规则和偏好
+4.  轻量级主动性：Cron/Heartbeat 都只是给 AgentLoop 发送"下一个输入"
+
+**需要注意/建议补充：4 点**
+
+1.  更强的记忆检索：当前的 MemoryStore 更像"记事本"，距离"可检索的长期记忆"仍然有距离
+2.  更严格的权限边界：exec 的正则护栏是必要的但不够；生产环境最好引入允许列表、二次确认、审计回放
+3.  会话和可移植性：会话默认存储在 `~/.nanobot/sessions`，对"将工作区迁移到另一台机器"不太友好
+4.  异步并发策略：现在是"逐个执行工具调用"，足够简单，但对于复杂编排（并行工具、通道队列、重试策略）还需要更多工作
+
+还有一个小坑：`process_direct()` 当前忽略传入的 session_key，导致 Cron/Heartbeat 这种"系统触发"的输入可能和你的 CLI 会话混淆。
+
+这类问题不难修复，但它提醒你：Agent 稳定性往往不取决于模型，而取决于"状态隔离"。
+
+# 结语：为什么建议读一遍 NanoBot 代码
+
+很多 Agent 框架读完让你更焦虑：更多概念，更多抽象，实际执行流水线反而更模糊。
+
+NanoBot 的好处：把"能工作的 Agent"压缩到你能读完的规模。
+
+不需要把它当成最终解决方案，最好把它当成"最小可行骨架"：先闭合循环，然后逐步添加护栏、添加记忆、添加工作流。
+
+这就是构建可控 Agent 的正确节奏。
+
+如果准备开始阅读，建议这个顺序，基本不会迷路：
+
+1.  `nanobot/agent/loop.py`: 先理解主流水线
+2.  `nanobot/agent/context.py`: 再看上下文如何组装
+3.  `nanobot/agent/tools/*`: 最后看工具系统和安全护栏
+4.  `nanobot/cron/* + nanobot/heartbeat/*`: 理解"主动性"如何接入
+5.  `nanobot/channels/*`: 需要连接新入口时再看
+
+这就是为什么 NanoBot 是一个值得学习的最小骨架，而不仅仅是另一个框架。
+
+关键技术指标（2026 年 2 月）：
+
+- 实际代码量：~3,510 行（核心 Agent 代码，通过 `core_agent_lines.sh` 验证）
+- 启动时间：0.8 秒（对比 OpenClaw 的 8-12 秒）
+- 内存占用：基础操作 45MB（对比 OpenClaw 的 200-400MB）
+- GitHub 指标：15.9K star，2.2K fork，32+ 贡献者
+- 最新发布：v0.1.3.post6（2026 年 2 月 10 日）
+- 支持通道：Telegram, Discord, WhatsApp, Mochat, DingTalk, Slack, Email, QQ
+- 支持 LLM 提供商：13+，包括 OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini, Groq, vLLM
+
+这个架构证明，有效的 AI Agent 不需要庞大的框架。通过将 Agent 设计精简到基础要素，NanoBot 实现了更快的实验、更容易的调试、更低的资源消耗和更强的执行控制。这证明当架构正确时，减少 99% 的代码仍能保持完整功能。
