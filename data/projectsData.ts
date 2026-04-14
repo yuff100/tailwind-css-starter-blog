@@ -53,6 +53,12 @@ const projectsData: Project[] = [
     description: '基于AI技术的智能货代邮件自动化处理平台，支持自动分类、回复和数据提取。',
     imgSrc: '/static/images/FreightBot.png',
     href: 'https://github.com/yuff100/FreightBot',
+  },
+  {
+    title: '在线小工具集合 Demo',
+    description: '集合了多种实用的在线小工具，方便用户快速访问和使用。',
+    imgSrc: '/static/images/free-tool.png',
+    href: 'https://free-tool.deepnomind.com/',
   }
 ]
 
