@@ -59,7 +59,14 @@ const projectsData: Project[] = [
     description: '集合了多种实用的在线小工具，方便用户快速访问和使用。',
     imgSrc: '/static/images/free-tool.png',
     href: 'https://free-tool.deepnomind.com/',
+  },
+  {
+    title: 'OpenStock Demo',
+    description: '无服务器架构的股市行情系统。',
+    imgSrc: '/static/images/open-stock.png',
+    href: 'https://open-stock.deepnomind.com/',
   }
+
 ]
 
 export default projectsData
