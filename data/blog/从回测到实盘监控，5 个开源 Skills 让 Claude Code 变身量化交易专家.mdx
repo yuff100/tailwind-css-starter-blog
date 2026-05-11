@@ -1,0 +1,409 @@
+---
+title: '从回测到实盘监控，5 个开源 Skills 让 Claude Code 变身量化交易专家'
+date: '2026-05-11'
+tags: ['人工智能', '量化交易']
+draft: false
+summary: '本文介绍了 5 个 Claude Code Skills（回测专家、数据流水线、信号生成器、风险管理器、实时信号监控器）以及如何用通过它们配合 EODHD API 快速搭建算法交易系统。'
+---
+
+![](https://image.deepnomind.com/blog/image/17493bc9b0755ebb3f4d70d35b082edd)
+
+---
+
+大多数交易者以为量化交易的瓶颈是策略，其实不是，真正的瓶颈，是**从想法到上线之间的那段时间**。写样板代码、对接 API、凌晨两点还在调试 vectorbt 报错 —— 这才是大多数策略死掉的地方。
+
+如果你正在：
+
+- 用 Python 构建系统化交易系统
+- 在投入真金白银之前测试技术指标
+- 想把几周的量化工作压缩到几天完成
+
+那么下面这些内容，对你很重要。
+
+---
+
+# 什么是 Claude Code Skills？
+
+Claude Code 不是聊天机器人，而是一个**运行在终端里的智能代理**，能读取文件、执行代码。对于算法交易来说，这改变了游戏规则。
+
+真正的力量来自 **Skills** —— 也就是 `SKILL.md` 文件。它们像菜谱一样，告诉 Claude 如何处理特定任务。装上 Skill，Claude 就变成了那个领域的专家。
+
+下面介绍 5 个来自公开仓库的 Skills，能让 Claude Code 在交易领域真正有用 —— 附带安装命令、内部工作流程，以及使用 EODHD 获取市场数据的可运行 Python 代码。
+
+---
+
+# 1. 回测专家 — 系统化策略测试
+
+**来源：** [tradermonty/claude-trading-skills](https://github.com/tradermonty/claude-trading-skills) · ⭐ 16
+
+```bash
+git clone https://github.com/tradermonty/claude-trading-skills.git
+cp -r claude-trading-skills/skills/backtest-expert ~/.claude/skills/
+```
+
+**Skill 内部工作流程：**
+
+1. 确认策略规则和参数
+2. 获取指定标的和周期的历史 OHLCV 数据
+3. 从头计算指标——不依赖任何库的黑盒
+4. 生成明确的入场/出场信号
+5. 运行向量化回测：收益率、夏普比率、最大回撤、胜率
+6. 输出权益曲线 + 汇总表
+7. 如果样本内窗口不足 2 年，标记过拟合风险
+
+**代码示例：** 基于 RSI 的回测，使用 EODHD API 获取数据，从零计算 RSI，生成买卖信号，计算夏普比率和总收益率。
+
+```python
+import requests
+import pandas as pd
+import numpy as np
+
+API_KEY = "YOUR_EODHD_KEY"
+
+# 通过 EODHD REST API 获取历史价格
+url = f"https://eodhd.com/api/eod/AAPL.US"
+params = {
+    "api_token": API_KEY,
+    "from": "2022-01-01",
+    "to": "2024-12-31",
+    "period": "d",
+    "fmt": "json"
+}
+data = requests.get(url, params=params).json()
+df = pd.DataFrame(data)[["date", "adjusted_close", "volume"]]
+df["date"] = pd.to_datetime(df["date"])
+df.set_index("date", inplace=True)
+df.columns = ["close", "volume"]
+
+# 从零计算 RSI
+delta = df["close"].diff()
+gain  = delta.clip(lower=0).rolling(14).mean()
+loss  = -delta.clip(upper=0).rolling(14).mean()
+df["rsi"] = 100 - (100 / (1 + gain / loss))
+
+# 生成信号
+df["signal"] = 0
+df.loc[df["rsi"] < 30, "signal"] =  1  # 买入
+df.loc[df["rsi"] > 70, "signal"] = -1  # 卖出
+
+# 向量化策略收益率
+df["returns"]  = df["close"].pct_change()
+df["strategy"] = df["signal"].shift(1) * df["returns"]
+sharpe = df["strategy"].mean() / df["strategy"].std() * np.sqrt(252)
+total  = (1 + df["strategy"]).prod() - 1
+print(f"夏普比率: {sharpe:.2f} | 总收益率: {total:.2%}")
+```
+
+**优点：** 结构化流程不会跳过过拟合检查；强制使用明确的信号逻辑，不依赖隐含的库假设。
+
+**缺点：** 需要清晰的策略描述；模糊的输入会产生平庸的回测结果。
+
+**最适合：** 每周测试 5-10 个策略变体的量化交易者，需要可重复、可对比的结果。
+
+---
+
+# 2. 市场数据流水线 — EODHD 集成
+
+**来源：** [JoelLewis/finance_skills](https://github.com/JoelLewis/finance_skills) · trading-operations 插件
+
+```bash
+npx skills add JoelLewis/finance_skills --plugin trading-operations
+```
+
+**Skill 内部工作流程：**
+
+1. 确认所需数据类型：EOD / 日内 / 基本面 / 实时
+2. 选择对应的 EODHD 接口
+3. 构建请求参数（标的格式、日期范围、周期）
+4. 将返回结果规范化为统一列名的 DataFrame
+5. 对历史价格分析应用公司行为调整
+6. 缓存结果，避免同一会话中的重复 API 调用
+7. 返回可直接用于指标计算的 DataFrame
+
+**糟糕的数据是回测的隐形杀手。** 存活者偏差、未调整价格、遗漏的公司行为 —— 这些不会报错，只会让策略看起来比实际更好。
+
+```python
+import requests
+import pandas as pd
+
+API_KEY = "YOUR_EODHD_KEY"
+
+def fetch_eod(symbol: str, start: str, end: str) -> pd.DataFrame:
+    r = requests.get(
+        f"https://eodhd.com/api/eod/{symbol}",
+        params={"api_token": API_KEY, "from": start, "to": end,
+                "period": "d", "fmt": "json"}
+    )
+    df = pd.DataFrame(r.json())
+    df["date"] = pd.to_datetime(df["date"])
+    return df.set_index("date")[["open", "high", "low", "close",
+                                 "adjusted_close", "volume"]]
+
+def fetch_intraday(symbol: str, interval: str = "1m") -> pd.DataFrame:
+    r = requests.get(
+        f"https://eodhd.com/api/intraday/{symbol}",
+        params={"api_token": API_KEY, "interval": interval, "fmt": "json"}
+    )
+    df = pd.DataFrame(r.json())
+    df["datetime"] = pd.to_datetime(df["datetime"])
+    return df.set_index("datetime")[["open", "high", "low", "close", "volume"]]
+
+def fetch_fundamentals(symbol: str) -> dict:
+    r = requests.get(
+        f"https://eodhd.com/api/fundamentals/{symbol}",
+        params={"api_token": API_KEY, "fmt": "json"}
+    )
+    return r.json()
+
+# 使用方法
+aapl = fetch_eod("AAPL.US", "2023-01-01", "2024-12-31")
+fund = fetch_fundamentals("AAPL.US")
+eps  = fund["Highlights"]["EPS"]
+print(f"EPS: {eps} | 最新调整收盘价: ${aapl['adjusted_close'].iloc[-1]:.2f}")
+```
+
+EODHD 覆盖全球 70+ 交易所（美股、ETF、外汇、加密货币），提供经过公司行为调整的价格数据，并有免费套餐供原型开发使用。
+
+**优点：** 调整后的 EOD + 分钟级日内数据 + 基本面 + 实时数据，全部来自同一个 API；有免费套餐。
+
+**缺点：** 无延迟的实时报价需要付费套餐。
+
+**最适合：** 任何正在构建严肃回测或实盘系统的人，需要机构级数据质量但只需独立开发者价格。
+
+---
+
+# 3. 信号生成器 — 把策略逻辑变成可执行代码
+
+**来源：** [ScientiaCapital/skills](https://github.com/scientiacapital/skills) · active/signal-generation
+
+```bash
+git clone https://github.com/scientiacapital/skills.git
+cp -r skills/active/signal-generation ~/.claude/skills/
+```
+
+策略在你的脑子里、在研究笔记里、或者在 TradingView Pine Script 里。需要把它变成干净、向量化的 Python 代码。而这个 Skill 负责翻译工作。
+
+**Skill 内部工作流程：**
+
+1. 将自然语言描述的策略规则解析为明确的条件
+2. 将每个条件映射为 pandas/numpy 操作
+3. 使用向量化操作计算指标（不逐行循环）
+4. 分别构建入场和出场序列
+5. 如果指定了时段或交易会话过滤条件，则应用
+6. 输出 DataFrame：[收盘价, 指标, 信号, 持仓]
+7. **验证：无前瞻偏差**（所有指标在信号比对前已完成位移）
+
+```python
+import requests
+import pandas as pd
+import numpy as np
+
+API_KEY = "YOUR_EODHD_KEY"
+r = requests.get(
+    "https://eodhd.com/api/eod/TSLA.US",
+    params={"api_token": API_KEY, "from": "2023-01-01",
+            "to": "2024-12-31", "period": "d", "fmt": "json"}
+)
+df = pd.DataFrame(r.json())
+df["date"] = pd.to_datetime(df["date"])
+df = df.set_index("date")[["high", "low", "adjusted_close"]] \
+      .rename(columns={"adjusted_close": "close"})
+
+# EMA 交叉 + ADX 过滤器（不依赖 TA-Lib）
+def ema(s, n):
+    return s.ewm(span=n, adjust=False).mean()
+
+def compute_adx(df, n=14):
+    tr = pd.concat([
+        df["high"] - df["low"],
+        (df["high"] - df["close"].shift()).abs(),
+        (df["low"]  - df["close"].shift()).abs()
+    ], axis=1).max(axis=1)
+    dm_pos = (df["high"] - df["high"].shift()).clip(lower=0)
+    dm_neg = (df["low"].shift() - df["low"]).clip(lower=0)
+    atr    = tr.ewm(span=n, adjust=False).mean()
+    di_pos = 100 * dm_pos.ewm(span=n, adjust=False).mean() / atr
+    di_neg = 100 * dm_neg.ewm(span=n, adjust=False).mean() / atr
+    dx     = (100 * (di_pos - di_neg).abs() / (di_pos + di_neg))
+    return dx.ewm(span=n, adjust=False).mean()
+
+df["ema20"] = ema(df["close"], 20)
+df["ema50"] = ema(df["close"], 50)
+df["adx"]   = compute_adx(df)
+
+cross_up = (df["ema20"] > df["ema50"]) & \
+           (df["ema20"].shift() <= df["ema50"].shift())
+adx_confirmed = df["adx"] > 25
+df["signal"] = (cross_up & adx_confirmed).astype(int)
+
+print(df[df["signal"] == 1][["close", "ema20", "ema50", "adx"]].tail())
+```
+
+**优点：** 前瞻偏差检查内置于流程中，Claude 在交付代码前就会标记问题；产出的是生产级向量化代码，不是教程式代码。
+
+**缺点：** 在接入实盘资金之前，务必人工验证信号逻辑。
+
+**最适合：** 那些用策略规则思考、希望 Claude 帮忙做 Python 翻译的交易者。
+
+---
+
+# 4. 风险管理器 — 仓位计算与风险控制
+
+**来源：** [JoelLewis/finance_skills](https://github.com/JoelLewis/finance_skills) · wealth-management 插件（risk-measurement skill）
+
+```bash
+npx skills add JoelLewis/finance_skills --plugin wealth-management
+```
+
+没有风险管理的策略，就是多绕了几步路的投机。这个 Skill 为 Claude 提供了每次仓位和风险计算的决策框架。
+
+**Skill 内部工作流程：**
+
+1. 基于当前设置计算 ATR 止损距离
+2. 应用固定比例仓位（默认：每笔交易风险为账户的 1%）
+3. 检查投资组合热度：如果总敞口超过净值的 5% 则标记警告
+4. 计算当前投资组合的历史 VaR（95% 置信度）
+5. 输出：入场价、止损价、股数、美元风险、R 倍数目标
+6. 定义熔断阈值：如果回撤超过 X%，停止新开仓
+
+```python
+import requests
+import pandas as pd
+import numpy as np
+
+API_KEY = "YOUR_EODHD_KEY"
+r = requests.get(
+    "https://eodhd.com/api/eod/AAPL.US",
+    params={"api_token": API_KEY, "from": "2024-10-01",
+            "to": "2024-12-31", "period": "d", "fmt": "json"}
+)
+df = pd.DataFrame(r.json())
+df["date"] = pd.to_datetime(df["date"])
+df = df.set_index("date")[["high", "low", "adjusted_close"]] \
+      .rename(columns={"adjusted_close": "close"})
+
+# ATR（14 周期）
+tr = pd.concat([
+    df["high"] - df["low"],
+    (df["high"] - df["close"].shift()).abs(),
+    (df["low"]  - df["close"].shift()).abs()
+], axis=1).max(axis=1)
+atr = tr.ewm(span=14, adjust=False).mean().iloc[-1]
+
+def size_position(equity, risk_pct, entry, stop):
+    risk_per_share = abs(entry - stop)
+    if risk_per_share == 0:
+        return 0
+    return int((equity * risk_pct / 100) / risk_per_share)
+
+equity      = 10_000
+entry_price = df["close"].iloc[-1]
+stop_price  = entry_price - (2 * atr)
+shares      = size_position(equity, 1.0, entry_price, stop_price)
+
+print(f"入场价:       ${entry_price:.2f}")
+print(f"止损价(2×ATR): ${stop_price:.2f}  |  ATR: ${atr:.2f}")
+print(f"仓位:          {shares} 股")
+print(f"美元风险:      ${shares * abs(entry_price - stop_price):.2f}")
+```
+
+**优点：** 产出可复用的参数化模块，不是硬编码值；流程中包含投资组合热度检查，不限于单笔交易。
+
+**缺点：** 仓位模型需要人工审核 —— Claude 不知道你的个人回撤容忍度。
+
+**最适合：** 同时运行多个策略的系统化交易者，需要一致、可审计的风险框架。
+
+---
+
+# 5. 实时信号监控器 — 实时预警
+
+**来源：** [roman-rr/trading-skills](https://github.com/roman-rr/trading-skills) · trading-signals skill
+
+```bash
+git clone https://github.com/roman-rr/trading-skills.git
+cp -r trading-skills/trading-signals ~/.claude/skills/
+```
+
+最后一个 Skill 闭环了从研究到实盘监控的全流程。不再是跑回测，而是实时监控信号，在条件满足时触发告警。
+
+**Skill 内部工作流程：**
+
+1. 通过 EODHD REST API 获取实时报价和近期 EOD K 线
+2. 在内存中维护一个滚动窗口
+3. 每根新 K 线到来时重新计算指标
+4. 评估信号条件——入场、出场或持仓
+5. 信号触发时：记录时间戳、标的、价格、指标值
+6. 发送预警（打印 / Telegram / 邮件）
+7. **从不直接执行订单** —— 只输出信号
+
+```python
+import requests
+import pandas as pd
+import numpy as np
+import time
+from datetime import datetime
+
+API_KEY = "YOUR_EODHD_KEY"
+
+def fetch_live_quote(symbol: str) -> float:
+    r = requests.get(
+        f"https://eodhd.com/api/real-time/{symbol}",
+        params={"api_token": API_KEY, "fmt": "json"}
+    )
+    return r.json().get("close", None)
+
+def fetch_recent_eod(symbol: str, n: int = 30) -> pd.Series:
+    r = requests.get(
+        f"https://eodhd.com/api/eod/{symbol}",
+        params={"api_token": API_KEY, "period": "d", "fmt": "json"}
+    )
+    df = pd.DataFrame(r.json()).tail(n)
+    df["date"] = pd.to_datetime(df["date"])
+    return df.set_index("date")["adjusted_close"].rename("close")
+
+def compute_rsi(series, n=14):
+    delta = series.diff()
+    gain  = delta.clip(lower=0).rolling(n).mean()
+    loss  = -delta.clip(upper=0).rolling(n).mean()
+    return 100 - (100 / (1 + gain / loss))
+
+symbol = "AAPL.US"
+print(f"正在监控 {symbol} | {datetime.now():%Y-%m-%d %H:%M}")
+
+while True:
+    close_series = fetch_recent_eod(symbol, n=30)
+    live_price   = fetch_live_quote(symbol) or close_series.iloc[-1]
+
+    today = pd.Timestamp.now().normalize()
+    close_series[today] = live_price
+    rsi   = compute_rsi(close_series).iloc[-1]
+
+    status = "超卖 → 关注买入" if rsi < 30 else \
+             "超买 → 关注卖出" if rsi > 70 else "中性"
+    print(f"[{datetime.now():%H:%M:%S}] {symbol} | ${live_price:.2f} | RSI: {rsi:.1f} | {status}")
+
+    if rsi < 30:
+        print(f"  🔔 预警: RSI 超卖 {rsi:.1f} - 检查入场机会")
+
+    time.sleep(60)
+```
+
+搭配 Telegram 机器人使用，你就能获得 24/7 自动运行的信号检测系统，不用再人工盯盘了。
+
+**优点：** 轮询模式在 EODHD 免费套餐上也能运行，不需要 WebSocket 订阅；Skill 强制信号与执行分离，不会意外下单。
+
+**缺点：** 60 秒轮询不适合亚分钟级策略（这类需求应使用 EODHD 的 WebSocket 数据流）。
+
+**最适合：** 波段交易者和日内交易者，希望在不构建完整执行系统的情况下实现信号自动检测。
+
+---
+
+# 转变已来
+
+Claude Code Skills 并非什么神奇的东西，就是一套结构化解决方案，能够避免在每个新项目中都不得不从头开始摸索的问题。
+
+五个 Skills 和一个可靠的数据层，瓶颈就从"怎么实现"转移到了本来应该在的地方：**判断哪些策略值得测试**。
+
+大多数量化交易者不缺想法，缺的是足够快的执行能力，来找到那些真正有效的策略。
+
+而这，正是正在改变的事情。
