@@ -1,0 +1,203 @@
+---
+title: 'Netflix实用API设计(下)'
+date: '2021-10-16'
+tags: ['大厂实践', '架构']
+draft: false
+summary: 'gRPC如今被很多公司应用在大规模生产环境中，很多时候我们并不需要通过RPC请求所有数据，而只关心响应数据中的部分字段，Protobuf FieldMask就可以帮助我们实现这一目的。本文介绍了Netflix基于FieldMask设计更高效健壮的API的实践，全文分两个部分，这是第二部分。'
+---
+
+> *gRPC如今被很多公司应用在大规模生产环境中，很多时候我们并不需要通过RPC请求所有数据，而只关心响应数据中的部分字段，Protobuf FieldMask就可以帮助我们实现这一目的。本文介绍了Netflix基于FieldMask设计更高效健壮的API的实践，全文分两个部分，这是第二部分。原文：[Practical API Design at Netflix, Part 2: Protobuf FieldMask for Mutation Operations](https://netflixtechblog.com/practical-api-design-at-netflix-part-2-protobuf-fieldmask-for-mutation-operations-2e75e1d230e4)*
+
+# 背景
+
+在[上一篇文章](https://www.deepnomind.com/blog/%E5%A4%A7%E5%8E%82%E5%AE%9E%E8%B7%B5/Netflix%E5%AE%9E%E7%94%A8API%E8%AE%BE%E8%AE%A1(%E4%B8%8A))中，我们讨论了在设计API时如何利用[FieldMask](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/field-mask)作为解决方案，以便消费者可以只请求他们需要的数据。在这篇文章中，我们将继续介绍Netflix Studio Engineering如何基于FieldMask进行更新和删除等变更操作。
+
+# 示例：Netflix工作室内容制作
+
+![《纸钞屋》(La casa de papel) / Netflix](https://image.deepnomind.com/blog/image/6a84a94529233cd308e332d773741aab)
+
+[上一篇文章](https://www.deepnomind.com/blog/%E5%A4%A7%E5%8E%82%E5%AE%9E%E8%B7%B5/Netflix%E5%AE%9E%E7%94%A8API%E8%AE%BE%E8%AE%A1(%E4%B8%8A))我们概述了什么是Production，以及Production服务如何对其他微服务（如Schedule服务和Script服务)进行gRPC调用，以检索特定产品（如《纸钞屋》）的日程和脚本（即剧本）。我们将继续利用这个示例并展示如何在生产中改变特定字段。
+
+# 改变制作细节
+
+假设我们为剧集添加了一些动画元素，因此想将`format`字段从`LIVE_ACTION`更新为`HYBRID`。解决这个问题的简单方法是添加一个updateProductionFormatRequest方法以及对应的gRPC endpoint来更新productionFormat：
+
+```protobuf
+message UpdateProductionFormatRequest {
+  string id = 1;
+  ProductionFormat format = 2;
+}
+
+service ProductionService {
+  rpc UpdateProductionFormat (UpdateProductionFormatRequest) 
+      returns (UpdateProductionFormatResponse);
+}
+```
+
+这允许我们更新特定产品的生产格式，但如果我们想要更新其他字段，如`title`，甚至多个字段，如`productionFormat`, `schedule`，等等，该怎么办?在此基础上，我们可以为每个字段执行一个更新方法：一个用于生产格式，另一个用于标题，等等：
+
+```protobuf
+// separate RPC for every field, not recommended
+service ProductionService {
+  rpc UpdateProductionFormat (UpdateProductionFormatRequest) {...}
+
+  rpc UpdateProductionTitle (UpdateProductionTitleRequest) {...}
+
+  rpc UpdateProductionSchedule (UpdateProductionScheduleRequest) {...}
+
+  rpc UpdateProductionScripts (UpdateProductionScriptsRequest) {...}
+}
+
+message UpdateProductionFormatRequest {...}
+
+message UpdateProductionTitleRequest {...}
+
+message UpdateProductionScheduleRequest {...}
+
+message UpdateProductionScriptsRequest {...}
+```
+
+由于Production上的字段数量太多，这将变得越来越难以维护。如果我们想要在单个RPC中以原子方式更新多个字段，该怎么办？为不同的字段组合创建额外的方法将导致变更API激增，因此这个解决方案是不可扩展的。
+
+与其尝试创建所有可能的单一组合，另一种解决方案可能是定义一个`UpdateProduction` endpoint，用来处理所有字段：
+
+```protobuf
+message Production {
+  string id = 1;
+  string title = 2;
+  ProductionFormat format = 3;
+  repeated ProductionScript scripts = 4;
+  ProductionSchedule schedule = 5;
+  // ... more fields
+}
+
+service ProductionService {
+  rpc UpdateProduction (UpdateProductionRequest) returns (UpdateProductionResponse);
+}
+
+message UpdateProductionRequest {
+  Production production = 1;
+}
+```
+
+这个解决方案有两个问题。首先，消费者必须知道并提供Production中每个必需的字段，即使他们只想更新一个字段，比如format。其次，由于Production有许多字段，所以请求的有效负载可能会变得非常大，尤其是在包含了schedule或script信息的时候。
+
+如果我们只发送真正想要更新的字段，而不设置所有字段，会怎么样？在示例中，我们只设置production format字段（以及引用production的ID）：
+
+```java
+UpdateProduction updateProduction = UpdateProduction.newBuilder()
+    .setProductionFormat(PRODUCTION_FORMAT_HYBRID)
+    .build();
+
+// Send the update request
+UpdateProductionResponse response = client.updateProduction(LA_CASA_DE_PAPEL_PRODUCTION_ID, 
+    updateProductionRequest);
+```
+
+如果我们永远不需要删除字段（或者把字段置为空），那这就可以工作了。但是，如果我们想要删除`title`字段的值，该怎么办？同样，我们也可以引入一次性方案，如`RemoveProductionTitle`，但正如上面讨论过的，这种解决方案伸缩性不好。如果我们想从日程计划中删除嵌套字段（如计划启动日期字段）的值，又该怎么办？我们最终会为每个可置空的子字段添加删除RPC。
+
+# 利用FieldMask进行变更操作
+
+除了定义大量的RPC，以及承受巨大的消息载荷，我们还可以利用FieldMask来实现所有的变更。FieldMask可以列出我们想明确更新的所有字段。首先，更新proto文件，加入`UpdateProductionRequest`，包含我们想在Production中更新的数据，以及应该被更新的FieldMask。
+
+```protobuf
+message ProductionUpdateOperation {
+  string production_id = 1;
+  string title = 2;
+  ProductionFormat format = 3;
+  ProductionSchedule schedule = 4;
+  repeated ProductionScript scripts = 5;
+  ... // more fields
+}
+
+message UpdateProductionRequest {
+  // contains production ID and fields to be updated
+  ProductionUpdateOperation update = 1;
+  google.protobuf.FieldMask update_mask = 2;
+}
+```
+
+现在，我们可以利用FieldMask进行变更，通过使用[FieldMaskUtil.fromStringList()](https://developers.google.com/protocol-buffers/docs/reference/java/com/google/protobuf/util/FieldMaskUtil.html#fromStringList-java.lang.Class-java.lang.Iterable-)方法为`format`字段创建一个FieldMask来更新format，该方法为特定类型的字段路径列表构造一个FieldMask。在本例中，我们设置了一个类型，稍后将在这个示例的基础上进行构建：
+
+```java
+FieldMask updateFieldMask = FieldMaskUtil.fromStringList(Production.class, 
+    Collections.singletonList(“format”);
+
+// Update the production format type
+ProductionUpdateOperation productionUpdateOperation = ProductionUpdateOperation
+    .newBuilder()
+    .setProductionId(LA_CASA_DE_PAPEL_PRODUCTION_ID)
+    .setProductionFormat(PRODUCTION_FORMAT_HYBRID)
+    .build();
+
+// Build the UpdateProductionRequest including the updatefieldmask
+UpdateProductionRequest updateProductionRequest = UpdateProductionRequest
+    .newBuilder()
+    .setUpdate(productionUpdateOperation)
+    .setUpdateMask(updateFieldMask)
+    .build();
+
+// Send the update request
+UpdateProductionResponse response = 
+    client.updateProduction(LA_CASA_DE_PAPEL_PRODUCTION_ID, updateProductionRequest);
+```
+
+由于我们在FieldMask中只指定了`format`字段，因此即使我们在`ProductionUpdateOperation`中提供了更多的数据，也只有`format`会被更新。通过修改路径，可以容易的在FieldMask中添加或删除更多字段。在有效负载中提供但没有添加到FieldMask路径中的数据将不会被更新，并在操作中被忽略。但是，如果我们省略了一个值，它将在该字段上执行remove操作。我们修改上面的例子来展示，更新format，但删除计划的启动日期，这是`ProductionSchedule`上的一个嵌套字段 `schedule.planned_launch_date`：
+
+```java
+FieldMask updateFieldMask = FieldMaskUtil.fromStringList(Production.class,
+    Arrays.asList("format", "schedule.planned_launch_date"));
+
+// Update the format, in addition remove schedule.planned_launch_date by not including it in our request
+ProductionUpdateOperation productionUpdateOperation = ProductionUpdateOperation
+    .newBuilder()
+    .setProductionId(LA_CASA_DE_PAPEL_PRODUCTION_ID)
+    .setProductionFormat(PRODUCTION_FORMAT_HYBRID)   
+    .build();
+
+UpdateProductionRequest updateProductionRequest = UpdateProductionRequest
+    .newBuilder()
+    .setUpdate(productionUpdateOperation)
+    .setUpdateMask(updateFieldMask)
+    .build();
+
+// Send the update request
+UpdateProductionResponse response = 
+    client.updateProduction(LA_CASA_DE_PAPEL_PRODUCTION_ID, updateProductionRequest);
+```
+
+在这个例子中，我们添加了`"format"`和`"schedule.planned_launch_date"`，执行了一次更新和一次删除操作。如果我们在有效负载中提供了字段值，对应的字段将被更新为新的值。但是当构建有效负载时，我们只提供了`format`，而省略了`schedule.planned_launch_date`，像这样在FieldMask中有定义，但是在有效负载中没有，将作为一个remove操作：  
+
+![](https://image.deepnomind.com/blog/image/d4545a5775eb5764111d4b26d1a47175)
+
+# 空的/缺失的字段掩码
+
+当字段掩码未设置或没有路径时，更新操作将应用于所有有效负载字段。这意味着调用者必须发送整个有效负载，否则，如上所述，任何未设置的字段都将被删除。
+
+这个约定会影响到schema的变更：当一个新字段被添加到消息中时，所有的消费者都必须在更新操作上发送它的值，否则它将被删除。
+
+假设我们想添加一个新字段：生产预算。我们将同时扩展`Production`消息和`ProductionUpdateOperation`：
+
+```protobuf
+// update operation with new ‘budget’ field
+message ProductionUpdateOperation {
+  string production_id = 1;
+  string title = 2;
+  ProductionFormat format = 3;
+  ProductionSchedule schedule = 4;
+  repeated ProductionScript scripts = 5;
+  ProductionBudget budget = 6;            // new field
+}
+```
+
+如果消费者不知道这个新字段或者还没有更新客户端，它可能会由于没有在更新请求中发送FieldMask字段而意外的把预算字段置空。
+
+为了避免这种问题，生产者应该考虑为所有更新操作请求设置字段掩码。另一种选择是实现版本控制协议：强制所有调用者发送他们的版本号，并实现自定义逻辑以跳过旧版本中不存在的字段。
+
+# 最后
+
+![](https://image.deepnomind.com/blog/image/3b57e696fecee30d1335f03a6d6e11a3)
+
+在这个系列文章中，介绍了我们如何在Netflix使用FieldMask，以及如何设计一个实用的、可扩展的API解决方案。
+
+API设计者应该以简单为目标，但要考虑API的扩展和演进。保持API的简单性和可预测性通常并不容易。通过使用FieldMask，可以帮助我们实现简单和灵活的API。
