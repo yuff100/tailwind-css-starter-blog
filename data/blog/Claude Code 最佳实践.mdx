@@ -6,6 +6,8 @@ draft: false
 summary: 'GitHub 排名第一的 12 条核心模式，教你如何从靠提示词"随缘编程"升级为用配置、钩子、子智能体和自动化工作流驱动的智能体工程。不需要新工具，只需要用好 Claude Code 自带的那些被大多数人所忽略的能力。'
 ---
 
+![](https://image.deepnomind.com/blog/image/b02435a5726baee3f63ec9bb4908983f)
+
 # CLAUDE CODE
 
 当我第三次看到 Claude 删错分支时，就不再怪罪模型了。
@@ -59,6 +61,8 @@ my-service/
 
 总行数保持可控。每条规则只在真正相关时才会生效。
 
+![](https://image.deepnomind.com/blog/image/d1cae3911315053ae5827ef0bd79aed1)
+
 # 2. 别再把 Claude Code 当成聊天窗口了
 
 有一个习惯我花了很长时间才改掉：每次请求都用全新的提示词重新申明所有规则。
@@ -79,6 +83,8 @@ my-service/
 
 "只读文件，不要修改任何东西"这句话已经从我的每一条提示词中删除了。不再需要了。
 
+![](https://image.deepnomind.com/blog/image/04a73698ec1d53080529e440f2246665)
+
 # 3. 上下文是资源，请这样对待它
 
 Skills 默认共享主智能体的上下文。这比听起来影响更大。
@@ -95,6 +101,8 @@ context: fork
 
 不需要手动执行 `/compact`，不需要开新会话清空缓存。
 
+![](https://image.deepnomind.com/blog/image/9fdee87df3d2693ed021f15dad349984)
+
 # 4. Hook 在智能体循环之外运行
 
 `PreToolUse`、`PostToolUse` 和 `Stop` —— 三个大多数 Claude Code 用户从未配置过的钩子点。
@@ -108,6 +116,8 @@ context: fork
 **受保护的危险操作**：`/careful` 模式激活一个 `PreToolUse` 钩子，拦截任何不可逆操作（文件删除、覆盖、分支强制推送）并在执行前要求明确确认，可以在进行风险重构前激活，任务完成后自动停用。
 
 **完成验证**：在模式 11 中详细说明。
+
+![](https://image.deepnomind.com/blog/image/b1c223eee6c8da313623f1e5de459a1e)
 
 # 5. 减少 84% 的权限提示
 
@@ -126,6 +136,8 @@ Claude Code 的默认行为是在执行每个 shell 命令时要求批准。这�
 智能体 A 在重构认证模块。智能体 B 在修复数据库层。智能体 C 在为两者编写测试。它们不共享上下文，彼此不冲突。它们的更改分别保存在不同分支上，直到准备合并。
 
 从一次等待一个 Claude 回复，到同时运行十几个，这种转变可能是在氛围编程和智能体工程之间最明显的区别。
+
+![](https://image.deepnomind.com/blog/image/d9bfc6c83341271aca2d2570a80288fe)
 
 # 7. `ultrathink` 不是噱头
 
