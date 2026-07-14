@@ -1,0 +1,33 @@
+# DeepNoMind 官方网站
+> 基于 Next.js 和 Tailwind CSS 的个人技术博客平台，专注于分享深度技术文章和项目实战经验。
+
+一个面向中文开发者的技术博客，涵盖 AI 智能体、系统架构、软件工程、DevOps、前端开发等领域的深度文章，同时展示了一系列 AI 驱动的 Demo 项目。
+
+## 核心页面
+
+- [首页](https://www.deepnomind.com): 最新文章和技术动态
+- [文章](https://www.deepnomind.com/blog): 技术博客文章合集
+- [项目](https://www.deepnomind.com/projects): AI 驱动的项目展示
+- [关于](https://www.deepnomind.com/about): 关于本站和作者
+
+## 标签
+
+- [标签列表](https://www.deepnomind.com/tags): 按标签浏览文章
+
+## Demo 项目
+
+- [AI 智能厨师](https://ai-chef.deepnomind.com/): 接入 AI 大模型的智能烹饪建议和食谱推荐
+- [AI Draw IO](https://ai-drawio.deepnomind.com/): 基于 AI 的图形编辑器，支持智能图形生成
+- [图床服务](https://image-bed.deepnomind.com/): 支持七牛云和又拍云 OSS 的图床服务
+- [微信公众号转 Markdown](https://w2m.deepnomind.com/): 将微信公众号文章转换为 Markdown 格式
+- [OpenCode 中文教程](https://learn-opencode.deepnomind.com/): 系统化的中文 OpenCode 教程
+- [智能发票处理](https://invoice-ai.deepnomind.com/): 基于 AI 的无服务器发票管理工具
+- [羽毛球 AI 教练](https://github.com/yuff100/BadmintonAI): 基于 AI 的羽毛球动作分析
+- [货代邮件自动化](https://github.com/yuff100/FreightBot): 智能货代邮件自动分类和回复
+- [在线小工具](https://free-tool.deepnomind.com/): 实用的在线小工具集合
+- [OpenStock](https://open-stock.deepnomind.com/): 无服务器架构的股市行情系统
+
+## 资源
+
+- [GitHub](https://github.com/yuff100/tailwind-nextjs-starter-blog): 项目源码
+- [RSS](https://www.deepnomind.com/rss.xml): 博客订阅

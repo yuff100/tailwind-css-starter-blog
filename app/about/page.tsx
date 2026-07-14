@@ -4,6 +4,7 @@ import AuthorLayout from '@/layouts/AuthorLayout'
 import { coreContent } from 'pliny/utils/contentlayer'
 import { genPageMetadata } from 'app/seo'
 import { components } from '@/components/MDXComponents'
+import { AboutSchema } from '../SchemaMarkup'
 
 export const metadata = genPageMetadata({ title: '关于作者' })
 
@@ -13,6 +14,7 @@ export default function Page() {
 
   return (
     <>
+      <AboutSchema author={mainContent} />
       <AuthorLayout content={mainContent}>
         <MDXLayoutRenderer code={author.body.code} components={components} />
       </AuthorLayout>
