@@ -1,0 +1,1206 @@
+---
+title: '基于 Qwen 打造低幻觉千万级文档 RAG 流水线'
+date: '2026-07-16'
+tags: ['架构','人工智能']
+draft: false
+summary: '本文详细构建了一套面向千万级文档的生产级 RAG 流水线，通过混合检索（稠密+BM25）、引用约束生成、原子声明验证和校准弃权四层防线，在不可回答问题上实现了低至 2% 的幻觉率，同时索引在千万级向量规模下保持 18 ms 的 p95 延迟。核心思路不是让模型从不犯错，而是让它只说能证明的话。'
+---
+
+![](https://image.deepnomind.com/blog/image/fe7b213342511289e287421653faabec)
+
+塞进 RAG（检索增强生成）系统的文档越多，它"编造"事实的途径就越多；当语料规模增长到数百万、奔着千万甚至更多而去时，幻觉（Hallucination）问题只会愈演愈烈。要在那样的规模下仍保证答案可信，需要一条让智能体自己核查证据、并为每条声明都标注出处的流水线。
+
+下面是整条流水线包含的全部内容：
+
+- **准备并获取数据**：下载语料，查看其规模和真实样本，并固定每一个随机种子，让运行可复现。
+- **清洗与切块**：对文本做标准化，用 MinHash 局部敏感哈希（MinHash LSH）丢掉近似重复（near-duplicate）段落，再切成带上下文前缀的结构感知型分块。
+- **构建混合索引（Hybrid index）**：把每个分块同时存为 LanceDB 中的稠密嵌入（dense embedding）向量和 BM25 的稀疏检索（sparse retrieval）倒排项，落盘存储以便扩展到上千万向量。
+- **检索与重排序（Reranking）**：用倒数排名融合（Reciprocal Rank Fusion，RRF）合并稠密与稀疏两路排名，再把 150 个候选重排序到 20 个。
+- **路由与分解**：对每个问题做分类，把多跳问题（multi-hop question）拆成子问题后再检索。
+- **带引用的生成**：严格依据上下文作答，每句话都附上引用，否则输出弃权（拒绝回答）（Abstention）token。
+- **逐条核验声明**：把答案拆成原子声明（atomic claim），用忠实度判断器（faithfulness judge）逐条对照其引用文本核查。
+- **不确定时弃权**：把多路信号汇成经过校准的决策，证据不足就拒绝回答。
+- **串起智能体**：把以上全部接成自我纠错的 CRAG（纠正式 RAG）（Corrective RAG）循环，在证据薄弱时重新检索。
+- **评估与扩展**：在 200 题的黄金测试集（golden set）上给幻觉打分，再把索引压到真实的 10M 向量做基准测试，并外推到 100M。
+
+全部代码都在 GitHub 仓库里（原理 + 代码）：[GitHub - FareedKhan-dev/rag-zero-hallucinations: Handling 10M+ docs using RAG with zero hallucinatons](https://github.com/FareedKhan-dev/rag-zero-hallucinations)
+
+# 几乎零幻觉，而非完全无幻觉
+
+我们要解决的问题并不是"让模型更聪明"，更大的模型在检索一无所获时照样会瞎猜，因为瞎猜正是生成式模型的本能。
+
+与其去追逐完美模型，不如把普通模型包进系统里，让这个系统只有一种安全的失败模式。当证据缺失时，正确的输出不是一段流畅的猜测，而是弃权。
+
+![](https://image.deepnomind.com/blog/image/ce6490643f2c539542b3d96f653788b6)
+
+这就给了我们四层控制，下面每一节都是其中一层。
+
+1. **检索正确的证据**：稠密加 BM25 的混合搜索、带上下文的分块、以及重排序。
+
+2. **约束生成**：只依据上下文作答，每句话都引用段落 id，否则弃权。
+
+3. **核验每一条原子声明**：用忠实度判断器把每条声明对照其引用文本核查。
+
+4. **弃权**：当声明支持度或检索置信度低于校准阈值时拒绝回答。
+
+我们同时追求两个目标。首先是**信任**，也就是在我们选择回答的问题上，幻觉接近于零。其次是**规模**，也就是检索主干要能装下千万级向量，同时仍能在毫秒级给出答案。第一个目标需要核验逻辑，第二个目标需要索引。
+
+我们需要把两者都构建出来。
+
+# 项目搭建
+
+首先，我们需要先把项目搭起来。计划是：导入依赖库，固定每一个随机种子以保证可复现，检查 GPU，用轻量客户端指向生成器，冻结配置，让项目在无人值守状态下也能确保每次都表现一致。
+
+![](https://image.deepnomind.com/blog/image/b8f8025eff0223c085608b2912fd3912)
+
+首先是导入，以及一个随机数生成器函数。
+
+```python
+import json, os, random, subprocess, time
+from dataclasses import dataclass, asdict, field
+import numpy as np
+
+def set_determinism(seed: int) -> None:
+    """为每个 RNG 设置种子以保证运行可复现。"""
+    random.seed(seed)
+    np.random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    try:
+        import torch
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    except Exception:
+        pass
+
+set_determinism(42)
+```
+
+一开始就要固定种子，因为不可复现的 RAG 评估根本算不上评估，这样你也可以信任本文最后的那些数字。
+
+```python
+#### 输出 ####
+profile=FULL slice=20000 eval=100+100 artifacts=/mnt/data/artifacts
+```
+
+完整运行包括两万段文本和 200 道评估题。我们只有一块 GPU，所以显存是硬限制。我们用 `nvidia-smi` 读卡，并断言确实在预期的硬件上。
+
+```python
+def gpu_report() -> dict:
+    """返回 GPU 名称 / 内存 / 驱动程序，并断言我们在 80GB H100 上。"""
+    name = _smi("name")[0]
+    total = float(_smi("memory.total")[0]) / 1024.0 # GiB
+    rep = {"name": name, "total_gb": round(total, 1),
+           "free_gb": round(float(_smi("memory.free")[0]) / 1024.0, 1),
+           "driver": _smi("driver_version")[0]}
+    print(json.dumps(rep, indent=2))
+    assert "H100" in name and total >= 79 # 一块 80GB H100，不能更小
+    return rep
+
+#### 输出 ####
+
+{
+  "name": "NVIDIA H100 PCIe",
+  "total_gb": 79.6,
+  "free_gb": 32.8,
+  "driver": "570.195.03"
+}
+```
+
+我们用一块 80 GB 的 NVIDIA H100，宿主机有 180 GB 内存和一块 750 GB NVMe 磁盘，后者在索引变大之后会很重要。
+
+生成器在一个独立 vLLM 服务里，我们用一个轻量的、与 OpenAI 兼容的客户端和它对话。让它在自己的进程里常驻，意味着我们可以把客户端重跑很多次而不用重新加载模型。
+
+```python
+class LocalLLM:
+    """vLLM OpenAI 兼容服务器的轻量级客户端。"""
+
+    def __init__(self, endpoint: str, model: str, thinking: bool = False):
+        self.endpoint, self.model, self.thinking = endpoint.rstrip("/"), model, thinking
+
+    def chat(self, system: str, user: str, temperature: float = 0.0, max_tokens: int = 512) -> str:
+        body = {"model": self.model, "temperature": temperature, "max_tokens": max_tokens,
+                "messages": [{"role": "system", "content": system},
+                             {"role": "user", "content": user}]}
+        if not self.thinking: # Qwen3: 为降低延迟而跳过思维链 trace
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        r = requests.post(f"{self.endpoint}/chat/completions", json=body, timeout=120)
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
+
+llm = LocalLLM("http://localhost:8000/v1", "Qwen/Qwen3-32B")
+print(f"[llm] up={llm.is_up()}")
+
+#### 输出 ####
+
+[llm] up=True
+```
+
+服务已就绪。搭建的最后一步是冻结每一个配置并打印出来。
+
+```python
+#### 输出 ####
+{
+  "gen_model": "Qwen/Qwen3-32B",
+  "embed_offline": "Qwen/Qwen3-Embedding-4B",
+  "rerank_model": "Qwen/Qwen3-Reranker-4B",
+  "chunk_tokens": 256, "chunk_overlap": 32,
+  "retrieve_k": 150, "rerank_top_n": 20, "rrf_k": 60,
+  "max_hops": 3, "crag_ok": 0.7, "crag_bad": 0.4,
+  "tau_claim": 0.3, "tau_abstain": 0.3, "seed": 42
+}
+```
+
+我们检索 150 个候选，重排序到 20 个，允许智能体最多 3 次纠正式跳转，并把两个支持度阈值都设在 0.3 —— 这两个阈值后面会做校准。生成器是 **Qwen3-32B**，嵌入器和重排序器是 4B 的 Qwen3 模型，忠实度判断器就是那个 32B 本身。
+
+生成器温度设为 0、关掉思维链 trace。这里每一个模型都是本地开源权重的 Qwen3，整套方案的前提就是：没有任何文档、没有任何查询会离开这台机器，这恰恰是让这样一条流水线能在私有语料上可用的关键。
+
+工具就绪，可以去取数据了。
+
+# 获取数据
+
+流水线的好坏只取决于它底下的语料，所以第一个真正的步骤是下载数据集。我选了 **HotpotQA** 的干扰设置（HotpotQA 的一种设置，每个问题附带干扰段落和黄金支持段落）。
+
+每个问题都自带句子级的黄金支持事实，这是后续给检索召回率（Recall）打分最干净的方式；它捆绑的维基百科段落又免费送了一个真实语料。另一方面，我还使用了 **SQuAD v2** 的不可能问题（测试模型在无答案时正确拒绝回答的能力），并手写了几道错误前提（false premise）问题，因为衡量幻觉的唯一办法就是问一些语料答不了的问题，然后看系统能不能保持沉默。
+
+第三个数据集 **HaluBench** 在最后登场，纯粹用来验证判断器本身。HotpotQA 才是我们构建并搜索的语料。
+
+![](https://image.deepnomind.com/blog/image/b056dcbaab6ce0e271bdffb1617205c3)
+
+```python
+from datasets import load_dataset
+
+def load_hotpotqa(split: str = "validation"):
+
+    # datasets 3.x 需要命名空间化的仓库 id
+
+    return load_dataset("hotpotqa/hotpot_qa", "distractor", split=split, cache_dir=DS_CACHE)
+
+hotpot = load_hotpotqa()
+print(f"[data] hotpotqa(validation) = {len(hotpot)} questions")
+
+#### 输出 ####
+
+[data] hotpotqa(validation) = 7405 questions
+```
+
+一共 7,405 个问题，每个问题都捆绑了它所源自的维基百科段落。我们定义段落和问题的格式，再写一个构造器，把每道题的上下文段落合并成语料库，同时记录哪些段落是黄金证据。
+
+```python
+@dataclass
+class Passage:
+    id: str
+    title: str
+    text: str
+    is_gold_for: list[str] = field(default_factory=list) # question ids this is gold for
+
+@dataclass
+class QAItem:
+    qid: str
+    question: str
+    answer: str
+    answerable: bool
+    gold_titles: list[str] = field(default_factory=list)
+    gold_sentences: list[str] = field(default_factory=list)
+    qtype: str = "" # bridge | comparison | unanswerable | false_premise
+
+class CorpusBuilder:
+    """从 HotpotQA 干扰上下文构建段落语料库 + QA 项。"""
+
+    def build(self, qa, n_passages: int):
+        passages, qa_items = {}, []
+        for ex in qa:
+            gold = list(dict.fromkeys(ex["supporting_facts"]["title"])) # gold evidence titles
+            for t, ss in zip(ex["context"]["title"], ex["context"]["sentences"]):
+                para = " ".join(s.strip() for s in ss).strip()
+                if len(para) < 40:
+                    continue
+                p = passages.setdefault(_pid(t, 0), Passage(_pid(t, 0), t, para))
+                if t in gold:
+                    p.is_gold_for.append(ex["id"])
+
+            # (完整的构造器还会记录每个问题的黄金支持句子)
+
+            qa_items.append(QAItem(ex["id"], ex["question"], ex["answer"], True,
+                                   gold_titles=gold, qtype=ex.get("type", "")))
+            if len(passages) >= n_passages:
+                break
+        return list(passages.values()), qa_items
+
+corpus, qa_items = CorpusBuilder().build(hotpot, SLICE_SIZE)
+print(f"[corpus] passages={len(corpus)} qa_items={len(qa_items)} "
+      f"gold-bearing passages={sum(1 for p in corpus if p.is_gold_for)}")
+
+#### 输出 ####
+
+[corpus] passages=20007 qa_items=2073 gold-bearing passages=4072
+```
+
+我们现在手握 20,007 个段落和 2,073 个问题，其中 4,072 个段落被标记为某道题的黄金证据。在搭建任何东西之前，应当先真正看一眼数据，既看规模分布，也看真实样本。
+
+```python
+import pandas as pd
+
+tok_lens = [len(p.text.split()) for p in corpus]
+print(pd.Series(tok_lens, name="passage_word_count").describe().round(1).to_string())
+
+ex = qa_items[0]
+print(f"\nSample question:\n Q: {ex.question}\n A: {ex.answer} (type={ex.qtype})")
+print(f" gold titles: {ex.gold_titles}")
+for s in ex.gold_sentences:
+    print(f" - {s}")
+
+#### 输出 ####
+
+count 20007.0
+mean 89.2
+std 53.4
+min 7.0
+25% 54.0
+50% 80.0
+75% 113.0
+max 1378.0
+
+示例问题:
+Q: Were Scott Derrickson and Ed Wood of the same nationality?
+A: yes (type=comparison)
+gold titles: ['Scott Derrickson', 'Ed Wood']
+
+- Scott Derrickson (born July 16, 1966) is an American director, screenwriter and producer.
+- Edward Davis Wood Jr. was an American filmmaker, actor, writer, producer, and director.
+```
+
+段落平均约 89 个词，短到一两条就能塞进一个提示里，又长到足以承载一个事实。样本是一道比较型问题："Were Scott Derrickson and Ed Wood of the same nationality?"，它的两句黄金句子已经包含了答案：两人都是美国人。
+
+这道题我们会贯穿本文的每一个阶段，因为看着一个真实问题走完整条流水线能让每个组件都变得更具体。两层测试在这里已经初见端倪。
+
+像这样可回答的问题让我们能衡量正确证据是否被检索回来，而后面加进去的不可回答问题则用来衡量幻觉。一个在语料里毫无支撑却仍作答的系统，就是一个在编造事实的系统。
+
+# 清洗语料
+
+垃圾进，幻觉出，所以在索引任何东西之前要先清洗文本。两步操作代价不高，但收益却很大。归一化让分词器对每一段都表现一致；近似重复去除则阻止被复制或转发过的段落挤占头部结果、虚增检索量却不带来任何新证据。
+
+![](https://image.deepnomind.com/blog/image/bf3e6617f78dc579f0bf0c79c841ef5c)
+
+```python
+import re, unicodedata
+
+def normalize_text(s: str) -> str:
+    s = unicodedata.normalize("NFKC", s) # Unicode 规范形式
+    s = s.replace("­", "") # 删除软连字符
+    s = re.sub(r"[ \t]+", " ", s) # 合并连续空格
+    return s.strip()
+```
+
+我先做 NFKC 归一化（NFKC normalization），是因为 BM25 直接对原始字符分词，一个连字或一串多余空格就会把一个词劈成两个、或把两个并成一个，无形中损害了召回率。在一段乱糟糟的字符串上，这个函数正好做了我们想做的事。
+
+```python
+#### 输出 ####
+
+>>> normalize_text("the ﬁnal report\twas ready")
+'the final report was ready'
+```
+
+连字 "ﬁ" 变成了普通的 "fi"，制表符和连续空格都塌缩成单个空格，于是两段只在不可见字符上有差异的段落现在会分词出完全相同的结果。
+
+去重才是有意思的部分。必须选一个像 MinHash LSH 这样的近似方法，而不是两两精确比对，因为精确两两比对是平方复杂度，在大语料下永远跑不完；而 MinHash 配一个 LSH 索引能以大致线性的时间找到近似重复。
+
+它们同时服务于两个目标。一是随着向量增长到千万级，让索引保持更小；二是阻止同一段落的三份拷贝挤占头部结果 —— 这是检索器给模型喂冗余上下文、诱使它过度信任单一来源的一种隐蔽方式。
+
+```python
+class Deduper:
+    """通过词组的MinHash LSH删除近重复段落。"""
+
+    def __init__(self, threshold: float = 0.9, num_perm: int = 64):
+        self.threshold, self.num_perm = threshold, num_perm
+
+    def fit_transform(self, passages: list[Passage]):
+        lsh = MinHashLSH(threshold=self.threshold, num_perm=self.num_perm)
+        kept, dropped = [], 0
+        for p in passages:
+            m = self._mh(p.text)
+            if lsh.query(m): # 近似重复项已被保留
+                dropped += 1
+                continue
+            lsh.insert(p.id, m)
+            kept.append(p)
+        return kept, {"kept": len(kept), "dropped_near_dup": dropped}
+
+#### 输出 ####
+
+{
+  "kept": 19987,
+  "dropped_near_dup": 19,
+  "input": 20007,
+  "after_quality": 20006,
+  "after_dedup": 19987
+}
+```
+
+丢掉 19 个近似重复和 1 个过短片段后，我们保留了 19,987 个段落。这个语料是一个精选切片，但清洗这一步无论输入是两万段还是两千万段，都可以原样照跑。
+
+# 分块与上下文
+
+现在我们把段落切成分块。定长切块是容易的选择，也是错误的选择，因为它会把一句承载实体信息的句子从能消歧它的上下文里割开，这对多跳问题是致命的。
+
+所以我们按句子整句打包，直到触及 Token 预算，并留一点小重叠，而且用生成器自己的分词器来数 token，这样预算才和模型实际看到的一致。这是一个藏在分块细节里的幻觉问题。
+
+如果分块超出预算被悄悄截断，那句藏着答案的句子就可能消失，于是问题看起来就不可回答了，而这其实毫无道理。所以宁愿尊重句子边界，为多出来的几个分块付点代价。
+
+![](https://image.deepnomind.com/blog/image/292ca89d214eb089baebeda75e407778)
+
+```python
+class StructureAwareChunker:
+    def __init__(self, tokenizer, target_tokens: int = 256, overlap: int = 32):
+        self.tok, self.target, self.overlap = tokenizer, target_tokens, overlap
+
+    def chunk(self, passage: Passage) -> list[Chunk]:
+        sents = split_sentences(passage.text) or [passage.text]
+        chunks, cur, cur_tok = [], [], 0
+        for s in sents:
+            st = self._ntok(s)
+
+            # 一旦添加这句话会超出 token 预算，就开始一个新分块
+
+            if cur and cur_tok + st > self.target:
+                chunks.append(self._make(passage, cur))
+
+                # 将末尾句子向前传递以使分块重叠
+
+                cur, cur_tok = ([cur[-1]], self._ntok(cur[-1])) if self.overlap else ([], 0)
+            cur.append(s)
+            cur_tok += st
+        if cur:
+            chunks.append(self._make(passage, cur))
+        return chunks
+
+#### 输出 ####
+
+[chunk] 19987 passages -> 21259 chunks (tokens: mean=125 p95=236)
+```
+
+我们获得了 21,259 个分块，平均 125 个 token，低于 256 的 token 预算。在索引之前还有一个问题要解决。
+
+一个像 "revenue grew 3 percent that quarter" 这样的分块本身是无法被检索的，因为"谁的 revenue"和"哪个 quarter"都丢了。所以我们在索引前给每个分块前置一句定位用的短句 —— 这就是上下文检索（contextual retrieval）的思路，只不过我们用本地 Qwen3 来写这句，而不是托管模型。
+
+```python
+CONTEXTUALIZE_PROMPT = (
+    "Here is a document titled '{title}':\n<document>\n{doc}\n</document>\n\n"
+    "Here is a chunk from it:\n<chunk>\n{chunk}\n</chunk>\n\n"
+    "Give a short, single-sentence context (<=25 words) that situates this chunk "
+    "within the document so it can be retrieved on its own. Answer with the sentence only."
+)
+```
+
+这个方法把每个分块的调用扇出到线程池里，因为各调用相互独立、vLLM 又会在服务端批量处理，这比一个分块一个分块的串行处理要快得多。我们还会把结果做检查点，这样重跑时就能跳过整步。
+
+```python
+class Contextualizer:
+    def contextualize(self, chunks, doc_lookup, workers: int = 32):
+        def _one(c):
+            user = CONTEXTUALIZE_PROMPT.format(title=c.title,
+                                               doc=doc_lookup.get(c.passage_id, c.text)[:4000],
+                                               chunk=c.text)
+            ctx = self.llm.chat("You write concise retrieval context.", user, max_tokens=64).strip()
+            c.contextual_text = (ctx + "\n" + c.text) if ctx else c.text # 前置，保留原始文本
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            list(ex.map(_one, chunks)) # 32个并发
+        return chunks
+
+#### 输出 ####
+
+Before:
+Ed Wood is a 1994 American biographical period comedy-drama film directed and
+produced by Tim Burton, and starring Johnny Depp as cult filmmaker Ed Wood...
+
+After (context-prefixed):
+This chunk introduces the 1994 film *Ed Wood*, directed by Tim Burton, and
+outlines its main subject and cast.
+Ed Wood is a 1994 American biographical period comedy-drama film...
+```
+
+这句额外的话成本很低，每个分块只需一次简短的生成，但能告诉检索器这个分块讲的是什么，哪怕分块文本本身有歧义。正是这一点点提升，让召回率最终达到了很高的水平。召回率是整个幻觉问题的基石，因为下游的忠实度判断器只能将答案锚定在检索真正找到的证据上，所以这里每多一点召回率，就多一个能回答的问题。
+
+# 加载检索模型
+
+分块准备就绪后，我们加载将这些分块转化为可搜索证据、并在后续检查答案的模型。三个模型与生成器共享同一块 GPU，因此我们在每次加载后对显存做快照并确保不超预算。重排序器和忠实度判断器在这里加载，嵌入器稍后在构建索引时才加载。
+
+![](https://image.deepnomind.com/blog/image/b4b250dc90360f9e101bb177036d74ab)
+
+我们不希望在三步之后才发现超限并以内存溢出崩溃收场，所以每次加载都会记录 `nvidia-smi` 报告的整卡数值和 torch 报告的内核专用数值。
+
+```python
+def vram_snapshot(tag: str) -> dict:
+    """Log GPU-wide and kernel-only VRAM after each load step."""
+    kernel = round(torch.cuda.memory_allocated() / 1024**3, 2)  # 仅此内核
+    used = round(float(_smi("memory.used")[0]) / 1024.0, 2)  # 整个GPU，两个进程
+    print(f"[vram] {tag:22} gpu_used={used}GB kernel={kernel}GB")
+    return {"tag": tag, "gpu_used_gb": used, "kernel_gb": kernel}
+```
+
+重排序器是一个小型因果模型，用作是非判断器。每个查询-文档对被包裹在固定模板中，分数直接从下一个 token 的对数中读取，因此重排序（reranking）对每个候选只需一次前向传播。我加载了一个专用的交叉编码器（cross-encoder）重排序器，而不是信任嵌入分数，因为嵌入器将整段文字压缩成一个向量。这样扫描语料库时足够快，但模糊了"仅仅提及了相关实体"的段落与"真正回答了问题"的段落之间的差异，而这一差异恰恰是阻止错误证据进入提示和答案的关键。
+
+```python
+class Qwen3Reranker:
+    """用模型在 'yes' token 上分配的概率，为 (query, doc) 对打分。"""
+
+    @torch.no_grad()
+    def score(self, query: str, docs: list[str], batch_size: int = 16) -> list[float]:
+        out = []
+        for i in range(0, len(docs), batch_size):
+            batch = [self._fmt(query, d) for d in docs[i:i + batch_size]]
+            enc = self.tok(batch, return_tensors="pt", padding=True,
+                           truncation=True, max_length=1024).to(self.model.device)
+            logits = self.model(**enc).logits[:, -1, :]  # last-token logits
+            yn = logits[:, [self.no_id, self.yes_id]]  # compare 'no' against 'yes'
+            probs = torch.softmax(yn.float(), dim=-1)[:, 1]  # keep P('yes')
+            out.extend(probs.cpu().tolist())
+        return out
+```
+
+忠实度判断器（faithfulness judge）就是 32B 生成器本身，通过提示让它针对某段上下文为一条声明返回一个支持分数。我让判断器使用本地的 32B 模型，因为 RAG 中的忠实度检查意味着要同时阅读一条声明和若干长段落——这恰恰是小型句子对 NLI 模型容易崩溃的场景——也因为这个判断器是唯一能将一个自信的错误答案转变为弃权（拒绝回答）（abstention）的组件。
+
+它是达成几乎零幻觉的核心，所以我宁愿把手上最强的模型花在它上面。NLI 交叉编码器和 MiniCheck 仍然作为更轻量的替代方案接入，但本次运行使用的是 LLM 判断器。
+
+```python
+JUDGE_PROMPT = (
+    "You are a strict fact-checker. Decide whether the CONTEXT supports the CLAIM.\n\n"
+    "CONTEXT:\n{context}\n\nCLAIM: {claim}\n\n"
+    "Output ONLY a number: 1.0 if the context clearly states or entails the claim, "
+    "0.0 if it contradicts or does not mention it, or a value in between."
+)
+
+class JudgeVerifier:
+    def _score(self, claim: str, context: str) -> float:
+        out = self.llm.chat("You are a strict faithfulness grader.",
+                             JUDGE_PROMPT.format(context=context[:6000], claim=claim), max_tokens=8)
+        m = re.search(r"[01](?:\.\d+)?", out)
+        return min(1.0, float(m.group())) if m else 0.0
+
+#### 输出 ####
+
+[vram] reranker gpu_used=54.3GB kernel=7.49GB
+[verifier] using the local LLM as faithfulness judge
+[vram] whole-GPU used=54.3GB / 80.0GB (need >= 3.0GB headroom)
+```
+
+整个技术栈占用 H100 提供的 80 GB 中的 54.3 GB，为接下来的索引工作留出了余量。判断器不需要额外显存，而是可以复用已经在 vLLM 服务器中运行的生成器。一切都在同一台机器上完成，没有调用任何外部 API。
+
+# 构建混合索引
+
+现在开始索引，这里的问题是没有任何单一检索器是足够的。稠密嵌入（dense embedding）能捕捉释义，当问题与答案用词不同时就需要这个了。
+
+BM25 能捕捉精确的 token —— 如名称、ID 和数字 —— 而这恰恰是稠密模型会忽略的地方。所以我们基于上下文化后的文本，以分块 ID 为键，对两者都建索引。
+
+![](https://image.deepnomind.com/blog/image/2b3991cd82477ef7492909d3356746ca)
+
+我们仅为索引加载嵌入器，嵌入每个分块后释放，在服务查询时改用更小的在线嵌入器。向量经过归一化，因此余弦相似度（cosine similarity）就是一个简单的点积。
+
+```python
+def embed_texts(embedder, texts, is_query: bool = False) -> np.ndarray:
+    kw = {"normalize_embeddings": True, "convert_to_numpy": True, "batch_size": 64}
+    if is_query:  # Qwen3-Embedding 需要查询指令提示词
+        kw["prompt_name"] = "query"
+    return embedder.encode(texts, **kw).astype("float32")
+```
+
+加载查询嵌入器是最后一件推高显存的事，快照显示了我们的落点。
+
+```python
+#### 输出 ####
+[vram] embedder(online) gpu_used=61.85GB kernel=15.04GB
+```
+
+峰值大约是 80 GB 中的 62 GB，仍在预算之内。索引完成后立即释放较重的离线嵌入器，只保留小的在线嵌入器常驻以服务查询。选择 LanceDB 作为稠密侧，因为它是嵌入式、基于 NVMe 磁盘的，无需运行服务器。这意味着同一条代码路径可以承载远超内存容量的索引，而正是这一特性让这个设计后续能扩展到千万级向量而无需改动一行代码。
+
+稠密侧是对它的一个薄封装。唯一的微妙之处在于将余弦距离转换回 0-1 范围内的相似度。
+
+```python
+class LanceVectorStore:
+    def search(self, qvec: np.ndarray, k: int) -> list[tuple[str, float]]:
+        res = self.tbl.search(qvec).metric("cosine").limit(k).to_list()
+
+        # 余弦距离在 [0, 2] 范围内，所以将其转换为 [0, 1] 范围内的相似度
+
+        return [(r["id"], 1.0 - r["_distance"] / 2.0) for r in res]
+```
+
+在向量旁边保留了一个词法 bm25s 索引，因为稠密嵌入恰恰会把稀有名称、ID 或数字模糊到邻居中，而这些往往正是事实性问题所依赖的 token，所以稀疏侧是我对抗"基于近似段落给出自信答案"的保险。稀疏侧以与文档相同的方式对查询进行词干提取，然后按 BM25 分数返回最匹配的结果。
+
+```python
+class BM25Index:
+    def search(self, query: str, k: int) -> list[tuple[str, float]]:
+        q = bm25s.tokenize(query, stemmer=self.stemmer)
+        idx, scores = self.retriever.retrieve(q, k=min(k, len(self.ids)))
+        return [(self.ids[int(i)], float(s)) for i, s in zip(idx[0], scores[0])]
+
+#### 输出 ####
+
+[index] LanceDB on-disk: /mnt/data/artifacts/lancedb | bm25 over 21259 chunks
+```
+
+这 21,259 个分块的整个索引在磁盘上大约只有 11.1 MB，体量很小，但关键在于形态而非大小。LanceDB 将向量放在 NVMe 上而非内存中，因此同一条代码路径可以承载远超内存容量的索引。这正是我们在本文末尾将这个设计推到千万级向量时所依赖的特性。
+
+# 检索：融合与重排序
+
+### 倒数排名融合
+
+现在我们有两个排序列表了，一个稠密、一个稀疏，需要将它们合并。陷阱在于它们的分数不可比较 —— BM25 分数和余弦相似度属于不同的尺度。
+
+倒数排名融合（Reciprocal Rank Fusion，RRF）完全绕开了这个问题。它忽略分数，只使用排名，给每个结果一个权重（1 除以 k 加其排名），然后在两个列表间求和。
+
+![](https://image.deepnomind.com/blog/image/33db2e482cc96ff38006c50c1b797e0e)
+
+```python
+def rrf_fuse(rankings: list[list[str]], k: int = 60) -> list[tuple[str, float]]:
+    scores: dict[str, float] = {}
+    for ranking in rankings:
+        for rank, cid in enumerate(ranking):
+
+            # 后面的排名贡献较少，无需进行分数归一化
+
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
+    return sorted(scores.items(), key=lambda x: -x[1])
+```
+
+看比说更容易理解。取两个短排名，稠密列表和稀疏列表意见不一致，看看融合做了什么。
+
+```python
+#### 输出 ####
+
+>>> rrf_fuse([["a", "b", "c"], ["b", "c", "a"]])
+[('b', 0.03252), ('a', 0.03227), ('c', 0.03200)]
+```
+
+文档 `b` 胜出，尽管两个列表都没有把它放在第一位，但它在两个列表中都靠近顶部。这就是全部的意义所在。
+
+两个不同检索器都认可的结果，会超越只有一个检索器青睐的结果。我们之所以要融合，是因为两个检索器以不同的方式失败。
+
+稠密搜索会漏掉一个在嵌入空间中孤立无援的稀有专有名词，稀疏搜索会漏掉一个与查询没有共享词汇的释义，融合就能挽回各自单独会丢弃的文档。检索器将两者绑在一起：嵌入查询一次，以相同宽度运行两种搜索，将两个 ID 排名融合为一个。
+
+```python
+class HybridRetriever:
+    def retrieve(self, query: str, k: int) -> list[RetrievedChunk]:
+        qvec = embed_texts(self.embedder, [query], is_query=True)[0]
+        dense = self.vec.search(qvec, k)  # 稠密搜索捕获释义和含义
+        sparse = self.bm25.search(query, k)  # 稀疏搜索捕获精确的名称、id、数字
+        fused = rrf_fuse([[i for i, _ in dense], [i for i, _ in sparse]], self.rrf_k)[:k]
+        return [c for c in (self._mk(cid, s, "hybrid") for cid, s in fused) if c]
+```
+
+融合后的列表是我们的召回阶段，刻意放宽到 150 个候选，因为下一阶段正是我们用召回率换取精确率（precision）的地方。
+
+### 重排序
+
+召回率便宜，精确率昂贵，所以我们按这个顺序运行。前面加载的重排序器将查询和候选一起读取，对匹配度打分。这远比双编码器嵌入准确，但速度慢到无法在整个语料库上运行。
+
+只对 150 个融合候选运行，正是最佳平衡点。在 150 个候选而非整个语料库上运行昂贵模型，也是一个扩展性决策，因为无论索引持有两万分块还是千万分块，成本都固定在 150 对。
+
+一个薄薄的层封装了模型，为每个候选评分，保留前二十名。
+
+![](https://image.deepnomind.com/blog/image/030ce845264b073b797e6109cdf97d69)
+
+```python
+class RerankerStage:
+    def rerank(self, query, cands, top_n):
+        scores = self.reranker.score(query, [c.text for c in cands])
+        ranked = sorted(zip(cands, scores), key=lambda x: -x[1])[:top_n]
+        out = []
+        for c, s in ranked:
+            c.score, c.source = float(s), "reranked"
+            out.append(c)
+        return out
+```
+
+可以通过对照 HotpotQA 黄金测试集（gold titles）测量段落召回率来证明这个提升。在我们的运行示例上，分别看纯稠密、混合、以及重排序后的结果。
+
+```python
+#### 输出 ###
+Q: Were Scott Derrickson and Ed Wood of the same nationality?
+gold titles: ['Scott Derrickson', 'Ed Wood']
+recall@20: dense=1.00 hybrid=1.00 reranked=1.00
+top-3 reranked:
+[a9ec406223bd] (0.999) Scott Derrickson
+[2d2201c92ac5] (0.996) Ed Wood
+[b7dbb0e190b4] (0.796) Ed Wood (film)
+```
+
+两个黄金段落都进入了前三名，重排序器分数分别为 0.999 和 0.996，而相关性较低的文章排在更低的 0.796。在整个评估集上，这套检索栈达到了 0.97 的上下文召回率，这意味着只要问题可回答，证据几乎总是存在。
+
+检索问题已经解决。此后的一切，都是关于如何不滥用它。
+
+# 路由与分解
+
+并非每个查询都值得走完整条流水线。一句问候不需要检索，一次简单查询只需要一跳，一次比较需要好几跳。所以智能体做的第一件事是将问题路由到三个标签之一，这让我们只在有用的地方花费算力。
+
+![](https://image.deepnomind.com/blog/image/e32b8c8f01edc17b4ef08e11d7adb168)
+
+```python
+ROUTER_PROMPT = (
+    "Classify the question into exactly one label:\n"
+    "- no_retrieval: greetings/opinions or questions no document corpus could answer\n"
+    "- single_hop: answerable by finding one fact\n"
+    "- multi_hop: needs combining facts from multiple documents\n"
+    "Question: {q}\nReply with only the label."
+)
+
+class QueryRouter:
+    LABELS = {"no_retrieval", "single_hop", "multi_hop"}
+
+    def route(self, query: str) -> str:
+        out = self.llm.chat("You are a precise query classifier.",
+                            ROUTER_PROMPT.format(q=query), max_tokens=8).strip().lower()
+        for lbl in self.LABELS:
+            if lbl in out:
+                return lbl
+        return "single_hop"  # 当模型输出冗长时的安全默认值
+```
+
+分解器和错误前提（false premise）检查同样小巧。分解器要求生成两三个自包含的子问题，检测器则直截了当地问一个是非题：查询是否假设了某些可能不成立的东西。
+
+```python
+DECOMPOSE_PROMPT = (
+    "Break this multi-hop question into 2-3 ordered, self-contained sub-questions, "
+    "one per line, no numbering. If it is already simple, return it unchanged.\nQuestion: {q}"
+)
+
+def detect_false_premise(query: str, llm: LocalLLM) -> bool:
+    out = llm.chat("You detect false presuppositions.",
+                   FALSE_PREMISE_PROMPT.format(q=query), max_tokens=4)
+    return out.strip().lower().startswith("y")
+
+#### 输出 ####
+
+route('Were Scott Derrickson and Ed Wood of the same nationality?...') -> single_hop
+decompose ->
+• What is the nationality of Scott Derrickson?
+• What is the nationality of Ed Wood?
+```
+
+同一个路由器在另外两类问题上展示了其他分支。
+
+```python
+#### 输出 ####
+route('What is the best programming language?') -> no_retrieval
+route('Who directed Ed Wood, and what is that director also known for?') -> multi_hop
+```
+
+一个观点得到 `no_retrieval`，这本身就是一条弃权路径，因为系统选择拒绝而非搜索一个没有文档能承载的答案。一个真正的双事实问题得到 `multi_hop`，这随后会将智能体送入其纠正式循环。
+
+路由器将我们的运行示例判定为单跳，因为重排序后的段落已经直接回答了，而分解器仍然展示了如果首轮结果不够丰富时，它会如何将这个比较拆解为两个干净的查询。路由很便宜，只是一次简短的分类调用。它之所以有存在价值，是因为它让昂贵的检索和验证工作远离那些不需要它们的问题，这在规模化时同样重要，因为每跳过一次检索，就省下了不必花费的延迟。
+
+# 引用生成
+
+这是第一道幻觉防火墙。系统提示禁止使用外部知识，要求每句话都有行内引用，并给模型明确的 token。仅仅告诉模型去引用是不够的，所以还会验证引用并丢弃模型编造的部分。
+
+![](https://image.deepnomind.com/blog/image/521680ab0bcee5639e2a0415784eac3c)
+
+```python
+ABSTAIN_TOKEN = "INSUFFICIENT_EVIDENCE"
+GENERATION_SYSTEM_PROMPT = (
+    "You answer strictly from the numbered context passages. Rules:\n"
+    "1. Use ONLY facts in the passages, never outside knowledge.\n"
+    f"2. If the passages do not contain the answer, reply with exactly: {ABSTAIN_TOKEN}\n"
+    "3. Every sentence MUST end with a citation to the passage id(s) it uses, like [abc123def456].\n"
+    "4. Be concise and factual."
+)
+```
+
+生成之后，解析引用标记，只保留与真实分块 ID 匹配的，因此编造的引用永远无法被送到用户面前。
+
+```python
+def parse_citations(text: str, valid_ids: set[str]) -> tuple[list[str], str]:
+    found = _CITE_RE.findall(text)
+    valid = [c for c in dict.fromkeys(found) if c in valid_ids]
+    invalid = [c for c in dict.fromkeys(found) if c not in valid_ids]
+    cleaned = text
+    for bad in invalid:  # 剥离模型编造的任何引用
+        cleaned = cleaned.replace(f"[{bad}]", "")
+    return valid, cleaned
+```
+
+在一句引用了一个真实段落和一个模型编造段落的句子上运行，假引用就消失了。
+
+```python
+#### 输出 ####
+
+>>> text = "Paris is the capital of France [a1b2c3d4e5f6]. The Louvre opened in 1793 [deadbeef0000]."
+>>> parse_citations(text, valid_ids={"a1b2c3d4e5f6"})
+(['a1b2c3d4e5f6'], 'Paris is the capital of France [a1b2c3d4e5f6]. The Louvre opened in 1793 .')
+```
+
+有效 ID 留下来了，编造的 `[deadbeef0000]` 被剥离，因此只有真实引用能进入下一阶段。这很重要，因为最危险的幻觉是一句自信的话附带一个不配拥有的引用。在这里，那个引用在任何人看到之前就消失了。生成器将检索到的段落连同其 ID 格式化，调用模型一次，要么返回弃权信号，要么返回一个经过解析和引用检查的答案。
+
+```python
+class CitedGenerator:
+    def generate(self, question, chunks) -> CitedAnswer:
+        user = f"Context passages:\n{format_context(chunks)}\n\nQuestion: {question}\n\nAnswer:"
+        raw = self.llm.chat(GENERATION_SYSTEM_PROMPT, user, max_tokens=400).strip()
+        if ABSTAIN_TOKEN in raw:  # 模型选择弃权
+            return CitedAnswer(text="", cited_ids=[], abstained=True, raw=raw)
+        cited, cleaned = parse_citations(raw, {c.id for c in chunks})
+        return CitedAnswer(text=cleaned.strip(), cited_ids=cited, abstained=False, raw=raw)
+
+#### 输出 ####
+
+Q: Were Scott Derrickson and Ed Wood of the same nationality?
+abstained=False citations=['a9ec406223bd', '2d2201c92ac5']
+A: Yes, Scott Derrickson and Ed Wood were of the same nationality; both were American. [a9ec406223bd] [2d2201c92ac5]
+```
+
+答案引用了我们检索到的两个段落，两个 ID 都是真实的，所以没有被剥离。此时我们有了一个流畅的、带引用的答案。但引用只证明模型指向了一个段落，并不能证明那个段落确实支持了它所说的话。
+
+一个模型可以引用一个真实段落却仍然有误读，所以引用是必要条件但不是充分条件。这个缺口正是下一道防火墙要挡住的。
+
+# 验证闸门
+
+这是决定性的防火墙。我们将草稿答案拆分为原子声明（atomic claim），然后用前面加载的忠实度判断器逐条对照其引用的上下文检查。分数低于阈值的声明是不受支持的，如果有任何一条声明未通过，整个答案就被降级为弃权。
+
+![](https://image.deepnomind.com/blog/image/7f4566884fead10e07a0c1e71ccc93ed)
+
+声明提取器将答案拆分为原子化、可独立检查的陈述，首先去掉引用标记，使声明成为干净的文本。
+
+```python
+class ClaimExtractor:
+    def extract(self, answer: str) -> list[str]:
+        clean = _CITE_RE.sub("", answer).strip()  # 先移除 [id] 标记
+        out = self.llm.chat("You extract atomic factual claims.",
+                            CLAIM_DECOMP_PROMPT.format(a=clean), max_tokens=300)
+        claims = [re.sub(r"^\s*\d+[.)]\s*", "", ln).strip(" -\t")
+                  for ln in out.splitlines() if ln.strip()]
+        return [c for c in claims if len(c) > 3]
+```
+
+闸门提取声明，逐条对照引用段落评分，只有当每条声明都通过阈值时才放行。
+
+```python
+class VerificationGate:
+    def check(self, cited: CitedAnswer, chunks: list[RetrievedChunk]) -> GateResult:
+        claims = self.extractor.extract(cited.text)  # 拆分为原子化声明
+        used = [c for c in chunks if c.id in set(cited.cited_ids)] or chunks
+        context = "\n\n".join(c.text for c in used)
+        verdicts = []
+        for cl in claims:
+            s = self.verifier.support(cl, context)
+            verdicts.append(ClaimVerdict(cl, s["score"], s["score"] >= self.tau,
+                                         s["nli"], s["minicheck"]))
+        min_support = min((v.score for v in verdicts), default=0.0)
+        passed = len(verdicts) > 0 and all(v.supported for v in verdicts)
+        return GateResult(passed, verdicts, min_support, len(verdicts))
+
+#### 输出 ####
+
+claims=3 passed=True min_support=1.00
+[OK 1.00] Scott Derrickson is American.
+[OK 1.00] Ed Wood is American.
+[OK 1.00] Scott Derrickson and Ed Wood share the same nationality.
+```
+
+这个单句答案被拆解为三条可检查的声明，每一条在引用段落上都获得了满分 1.00，因此验证门以 1.00 的最低支持度通过。在声明级别而非整个答案级别进行检查，正是这套机制严格的原因所在。
+
+一个长答案可能百分之八十都有据可依，却仍然偷偷塞进一条编造的事实。答案级别的评分会把它放过去，而声明级别的门则会隔离出那句话并判定失败。关键的设计选择是：门报告的是最弱声明的得分，而非平均值，一个答案的可信度取决于它最缺乏支持的那句话。
+
+这条"最弱声明"规则在它触发时最能说明问题。下面是同一个门对一道错误前提（false premise）问题的草稿运行的结果，模型在这道题上试图迎合提问。
+
+```python
+#### 输出 ####
+claims=2 passed=False min_support=0.20
+[OK 0.95] Marie Curie was a physicist.
+[XX 0.20] Marie Curie traveled to the Moon.
+```
+
+第一条声明有充分的依据，但第二条得分仅为 0.20，远低于 0.3 的阈值，因为没有任何段落提到这样的事。一条失败的声明就把 `passed` 翻转为 False，整个答案被丢弃，这道问题从一次自信的虚假陈述变成了一次弃权（abstention，拒绝回答）。这就是幻觉被捕获并转化为安全拒绝的精确时刻。
+
+对于处于边界线的答案，我们不会直接扔掉。一轮链式验证（chain-of-verification）给它一次自我修复的机会：重写任何上下文不支持的句子，保留引用，然后门在修订后的文本上再跑一遍。
+
+```python
+COVE_PROMPT = (
+    "Revise the answer so EVERY sentence is directly supported by the context. "
+    "Remove or soften any claim not supported. Keep citations [id].\n\n"
+    "Context:\n{ctx}\n\nAnswer:\n{ans}\n\nRevised answer:"
+)
+
+def cove_revise(answer: str, chunks, llm: LocalLLM) -> str:
+    ctx = format_context(chunks)
+    return llm.chat("You make answers strictly faithful to context.",
+                    COVE_PROMPT.format(ctx=ctx, ans=answer), max_tokens=400).strip()
+```
+
+# 知道何时弃权
+
+弃权（abstention，拒绝回答）是一个正确答案，而非失败，所以我们把它当作一等结果来对待。正是这一步让近乎零幻觉成为可能。
+
+我们无法阻止模型在语料库中没有答案的问题上犯错，但可以让系统拒绝回答那道问题。这把无界的失败（自信的谎言）变成了有界的失败（可见的、可衡量、可调优的弃权）。策略把所有信号折叠成一个决策。
+
+如果路由器说不需要检索，或者模型输出了弃权令牌，或者验证门未通过，我们就弃权；否则，我们用经过验证的文本回答。
+
+![](https://image.deepnomind.com/blog/image/2d77297c89b354ac79bf81445ed475aa)
+
+每个结果都是一条严格、可审计的记录，因此评估时可以明确区分"已回答"和"已弃权"，无需任何猜测。
+
+```python
+@dataclass
+class FinalAnswer:
+    status: str  # "已回答" 或 "已弃权"
+    answer: str
+    citations: list[str]
+    min_support: float
+    reason: str  # 哪个门控触发，或"已验证"
+
+class AbstentionPolicy:
+    def decide(self, route, false_premise, cited, gate) -> FinalAnswer:
+        if route == "no_retrieval":
+            return self._abstain("routed_no_retrieval", gate)
+        if cited.abstained:
+            return self._abstain("model_abstained", gate)
+        if gate is None or not gate.passed or gate.min_support < self.tau:
+            return self._abstain("unsupported_claims", gate)
+        return FinalAnswer("answered", cited.text, cited.cited_ids,
+                           gate.min_support, "verified", {})
+
+#### 输出 ####
+
+AbstentionPolicy ready; reasons = {routed_no_retrieval, false_premise, model_abstained, unsupported_claims, verified}
+```
+
+有个细节值得一提。错误前提标志被记录为一个信号，但不是一道硬性门控，因为小型"是/否"检测器噪声太大，不能单独信赖。
+
+我们让评分加声明验证的证据路径来做真正决策。当没有段落支持时，它自然会捕获错误前提问题。当系统确实弃权时，它返回一条朴素的消息："I do not have enough supporting evidence in the available sources to answer this confidently."（在可用来源中我没有足够的支持证据来确信地回答这个问题），而非猜测。
+
+# 智能体
+
+我们现在已经构建了每一个组件，最后一步是把它们接成一个能自我纠正的图，因为幻觉最大的单一成因就是从糟糕的上下文中生成。循环用 LangGraph 构建，因为控制流确实是一张图而非一条直线：路由可以跳过检索，评分可以回环到精炼，验证可以把答案降级为弃权。所以我宁愿把这些边显式声明出来，也不愿把它们埋在嵌套的条件判断里。
+
+我们路由、检索，然后给证据评分。如果证据强，就直接生成；如果证据弱，就精炼查询并重新检索，直到达到跳数上限；如果毫无希望，就直接弃权，根本不生成。
+
+![](https://image.deepnomind.com/blog/image/2c061e26ce3c6299efb5d871fca888fc)
+
+智能体在节点之间传递状态对象：类型化字典，累积路由、证据、评分、草稿、门结果和实时延迟记录。
+
+```python
+class AgentState(TypedDict, total=False):
+    question: str
+    route: str
+    query: str
+    evidence: list
+    grade: float
+    draft: Any
+    gate: Any
+    final: Any
+    hops: int
+    latencies: dict
+```
+
+每个节点只做一件事。评分器评估当前段落对问题的回答程度，精炼节点是纠正式步骤，递增跳数计数器，分解问题，在重新检索之前拓宽查询。
+
+```python
+def grade_evidence(query: str, chunks, llm: LocalLLM) -> float:
+    ctx = "\n".join(f"- {c.text[:200]}" for c in chunks[:8])
+    out = llm.chat("You grade retrieval sufficiency.",
+                   GRADE_PROMPT.format(q=query, ctx=ctx), max_tokens=8)
+    m = re.search(r"[01](?:\.\d+)?", out)
+    return float(m.group()) if m else 0.5
+
+def n_refine(state: AgentState) -> AgentState:
+    state["hops"] = state.get("hops", 0) + 1
+    subs = decomposer.decompose(state["question"])
+    state["query"] = " ".join(subs)  # 用子问题扩展查询
+    return state
+```
+
+一个小型路由函数把评分转化为下一步动作，图把各节点接在一起，精炼步骤回环到检索。
+
+```python
+def _after_grade(state: AgentState) -> str:
+    g = state.get("grade", 0.0)
+    if g >= CRAG_OK:  # 0.7+, 证据充分，直接回答
+        return "generate"
+    if g < CRAG_BAD or state.get("hops", 0) >= MAX_HOPS:
+        return "generate" if g >= CRAG_BAD else "finalize"  # 证据太弱，弃权
+    return "refine"  # 边界情况，精炼查询并重试
+
+def build_agent_graph():
+    g = StateGraph(AgentState)
+    for name, fn in [("route", n_route), ("retrieve", n_retrieve), ("grade", n_grade),
+                     ("refine", n_refine), ("generate", n_generate),
+                     ("verify", n_verify), ("finalize", n_finalize)]:
+        g.add_node(name, fn)
+    g.set_entry_point("route")
+    g.add_conditional_edges("grade", _after_grade,
+                            {"generate": "generate", "refine": "refine", "finalize": "finalize"})
+    g.add_edge("refine", "retrieve")  # 纠正反馈循环
+    g.add_edge("generate", "verify")
+    g.add_edge("verify", "finalize")
+    return g.compile()
+```
+
+在我们一直使用的示例上运行完整智能体，可以看到每个阶段及其耗时。
+
+```python
+#### 输出 ####
+Q: Were Scott Derrickson and Ed Wood of the same nationality?
+route=single_hop hops=0 grade=1.00 status=answered reason=verified
+A: Yes, Scott Derrickson and Ed Wood were of the same nationality; both were American.
+latencies(s): {'route': 0.16, 'retrieve': 2.4, 'grade': 0.13, 'generate': 0.94, 'verify': 0.97, 'total': 4.6}
+```
+
+评分返回 1.00，所以智能体直接进入生成，最终状态是 `answered`，原因是 `verified`。这意味着它通过了我们构建的每一道门。跳数计数器在这里保持为零，但在检索结果稀薄时它会爬到三再放弃。有界循环既让延迟控制在预算内，又允许第二、第三次尝试。
+
+这个对比就是整个设计的缩影。给智能体一道语料库中没有答案的问题，同一张图会得出相反但正确的结论。
+
+```python
+#### 输出 ####
+Q: Which programming language did Isaac Newton invent in 1700?
+route=single_hop hops=0 grade=0.15 status=abstained reason=unsupported_claims
+A: I do not have enough supporting evidence in the available sources to answer this confidently.
+latencies(s): {'route': 0.17, 'retrieve': 2.9, 'grade': 0.14, 'total': 3.3}
+```
+
+检索没有找到任何关于牛顿发明编程语言的内容，所以评分返回 0.15，低于 `crag_bad` 的下限 0.4，智能体直接终结为弃权，根本不生成。这个提前退出也是弃权路径更快的原因，系统一旦知道证据不存在，就不会在生成或验证上花任何时间。这就是不可回答测试集上 100 道题中 98 次弃权的真实结果。
+
+# 效果如何？
+
+### 黄金测试集
+
+要衡量这一切，我们需要一个分两层的测试集。可回答层来自 HotpotQA，不可回答层来自 SQuAD v2 的不可能问题（impossible questions，测试模型在无答案时正确拒绝回答的能力）加上少量手工构建的错误前提问题。
+
+不可回答的那一半才是重点，因为这正是普通 RAG 系统悄悄胡说八道的地方。我们构建的一切（引用规则、声明门、弃权策略）都是为了让那一半保持沉默，所以真正为"近乎零幻觉"这个主张打分的正是这一层，而可回答的那一半打分的是检索是否完成了任务。
+
+![](https://image.deepnomind.com/blog/image/5050bfaad878c246a4da6625f42f836b)
+
+```python
+def build_false_premise_set() -> list[EvalItem]:
+    qs = [
+        "In what year did Albert Einstein win his second Nobel Prize in Physics?",
+        "What was the name of the spaceship Marie Curie flew to the Moon?",
+        "How many gold medals did William Shakespeare win at the Olympics?",
+        "Which programming language did Isaac Newton invent in 1700?",
+    ]
+    return [EvalItem(f"fp_{i}", q, "", [], False, "false_premise") for i, q in enumerate(qs)]
+
+#### 输出 ####
+
+[golden] 200 items (answerable=100, unanswerable=100)
+```
+
+我们最终得到一个平衡的 200 道题测试集，一半可回答，一半不可回答。错误前提问题故意设计得荒谬，比如问牛顿在 1700 年发明了哪种编程语言，一个会回答这类问题的系统，就是一个会对任何听起来自信的问题编造事实的系统。
+
+对半平衡很重要，因为一个以可回答为主的测试集会让系统在困难案例上仍然胡说八道的同时获得高分。这个测试集的一半纯粹是为了衡量克制。
+
+### 幻觉集中在一个格子里
+
+现在我们在全部 200 道题上运行智能体，把结果按二乘二表格打分。行是可回答或不可回答，列是已回答或已弃权，唯一危险的格子是"不可回答且已回答"，因为那按定义就是幻觉。
+
+```python
+def confusion_2x2(results, items) -> np.ndarray:
+    cm = np.zeros((2, 2), dtype=int)  # 行: 可回答/不可回答, 列: 已回答/已弃权
+    for r, it in zip(results, items):
+        i = 0 if it.answerable else 1
+        j = 0 if r.final.status == "answered" else 1
+        cm[i, j] += 1
+    return cm
+```
+
+![](https://image.deepnomind.com/blog/image/0372ed9cdfe2b07ad08001d28e341884)
+
+```python
+#### 输出 ####
+confusion (rows ans/unans, cols answered/abstained):
+[[46 54]
+ [ 2 98]]
+hallucinations (unanswerable answered): 2 / 100 unanswerable
+```
+
+下面这行，它是全部意义所在。在 100 道不可回答的问题中，系统对 98 道弃权，只回答了 2 道。在专门设计来诱捕它的问题上，这是 2% 的幻觉率。
+
+一个没有验证门的普通 RAG 系统会点亮那个格子，因为没有任何东西阻止它回答语料库无法支持的问题。矩阵的上面一行是这套安全机制付出的代价，我们接下来就看这个。
+
+### 安全的代价
+
+二乘二表格用了一个固定阈值，但阈值是一个旋钮。调高它，系统弃权更多，幻觉降低，但覆盖率也降低。为了有意识选择，我们扫描阈值并画出一条风险-覆盖率曲线，然后选择在保持幻觉低于预算的同时尽可能多回答的那个点。
+
+```python
+def pick_tau(df, max_halluc: float = 0.05) -> float:
+    # 在保持幻觉低于预算的阈值中，选择覆盖率最高的
+    ok = df[df["hallucination_rate"] <= max_halluc]
+    return float(ok.sort_values("coverage", ascending=False).iloc[0]["tau"]) if len(ok) else 1.0
+```
+
+![](https://image.deepnomind.com/blog/image/30dc0a103512a40b74fafc8d2cafd2e1)
+
+```python
+#### 输出 ####
+chosen τ* (halluc<=5%): 1.0
+metrics: {
+"faithfulness": 0.908,
+"answer_relevancy": 0.817,
+"context_recall@k": 0.97,
+"answerable_accuracy": 0.58
+}
+```
+
+在已回答的问题上，得到 0.908 的忠实度（faithfulness）和 0.97 的上下文召回率（context recall），这说明证据在那里，答案也扎根于证据之中。代价就是矩阵的顶行。
+
+我们回答了 100 道可回答问题中的 46 道，对其余弃权，覆盖率 0.46。这就是刻意的权衡。
+
+我们宁愿对一道本可以回答的问题保持沉默，也不愿冒险给出自信的错误答案。在这条曲线上究竟在哪里是产品决策而非模型决策，它可以按语料库逐个设置，取决于在那个领域错误答案的代价有多高。
+
+### 判断器靠谱吗？
+
+有一个漏洞要堵。整道门都依赖验证器，所以未经验证的验证器只是把幻觉从答案搬到了记分牌上。我们在 HaluBench 上单独测试验证器（一组人工标注的忠实和幻觉答案）并报告 ROC 曲线下面积（AUROC，衡量二分类器区分能力的指标）。
+
+```python
+def eval_verifier(verifier, n: int = 300) -> dict:
+    hb = load_halubench().shuffle(seed=SEED).select(range(n))
+    scores, labels = [], []
+    for ex in hb:
+        scores.append(verifier.nli_score(ex["answer"], ex["passage"]))  # 判断器的支持度分数
+        labels.append(1 if str(ex["label"]).upper().startswith("PASS") else 0)
+    from sklearn.metrics import roc_auc_score
+    return {"auroc": round(float(roc_auc_score(labels, scores)), 3), "n": len(labels)}
+```
+
+![](https://image.deepnomind.com/blog/image/14ca73c4d52dcda84f9f471375310783)
+
+```python
+#### 输出 ####
+[verifier] AUROC=0.702 over n=300 HaluBench items
+```
+
+验证器在 300 条数据上获得了 0.702 的 AUROC，明显好于随机猜测，但离完美还差得远。我想对此直言不讳，因为这才是整道门真正的上限。
+
+更强的验证器是唯一能把上述数字推得更高的改变，而架构设计让我们可以直接换一个进来，不用动其余部分。门不需要完美验证器才能发挥作用，它需要的是一个能把有支持的声明排在无支持的声明之上的验证器，从而移动工作点。0.702 越过了那道门槛，同时留下了充足的成长空间。
+
+# 扩展到 1000 万以上向量
+
+### 一个真实的千万级向量索引
+
+质量流水线已经在精选切片上得到验证。现在我们必须从字面上证明规模主张，证明标题说的千万级文档，而基准测试是唯一能一锤定音的东西。
+
+所以我们在 10 万、100 万和 1000 万向量上分别构建 LanceDB 索引，使用真正的近似最近邻索引，在每一步测量构建时间、磁盘占用和查询延迟。必须使用近似的 IVF_PQ 索引而非精确搜索，因为精确扫描要把查询和每个向量比较，复杂度与 n 成线性关系（这正是千万级规模上爆炸的成本），而近似索引只访问少数分区，把每个向量量化到几个字节，用一点召回率（recall）换取几乎不随语料库增长而移动的延迟。
+
+为了让这是一个干净的向量搜索基准测试，这里的向量是合成的（1024 维单位向量）。通过 Arrow 导入，使得这条路径能承载数千万行。主机有 180 GB 内存和 750 GB NVMe 磁盘，所以一千万向量的索引在一台机器上就能轻松放下，这正是磁盘存储的全部意义所在。
+
+![](https://image.deepnomind.com/blog/image/3be9dacb7e99b0137ed988e459f4c0c3)
+
+```python
+class ScaleBench:
+    def run(self, sizes: list[int]) -> "pd.DataFrame":
+        rows = []
+        for n in sizes:
+            vecs = make_synthetic_vectors(n, self.dim)  # 1024 维单位向量
+            db = lancedb.connect(str(SCRATCH_DIR / f"scale_{n}"))
+            t0 = time.time()
+            tbl = db.create_table("v", data=self._arrow(vecs), mode="overwrite")
+            if n >= 100_000:  # 构建真正的 ANN 索引
+                tbl.create_index(metric="cosine",
+                                 num_partitions=int(min(4096, max(256, n ** 0.5))),
+                                 num_sub_vectors=64)
+            build_s = time.time() - t0
+
+            # 然后计时 50 次查询以获得 p50/p95，并根据暴力搜索检查 recall@10
+
+            rows.append(self._measure(tbl, vecs, build_s))
+        return pd.DataFrame(rows)
+
+#### 输出 ####
+
+[scale] building n=100,000 with IVF_PQ ANN index ...
+-> {'n': 100000, 'build_s': 41.82, 'disk_gb': 0.39, 'p50_ms': 8.5, 'p95_ms': 10.59, 'recall@10': 0.135}
+[scale] building n=1,000,000 with IVF_PQ ANN index ...
+-> {'n': 1000000, 'build_s': 81.22, 'disk_gb': 3.884, 'p50_ms': 11.34, 'p95_ms': 14.46, 'recall@10': 0.105}
+[scale] building n=10,000,000 with IVF_PQ ANN index ...
+-> {'n': 10000000, 'build_s': 347.04, 'disk_gb': 38.825, 'p50_ms': 16.91, 'p95_ms': 18.48, 'recall@10': 0.105}
+```
+
+关键数字就在最后一行。一个千万级向量索引的 p95 延迟（第95百分位延迟，衡量响应时间的统计指标）为 18.48 ms，而只有其百分之一数据量的索引回答延迟为 10.59 ms。
+
+数据量增长一百倍，延迟却不到两倍。磁盘占用线性增长，从 0.39 GB 涨到 38.8 GB。这正是我们想要的结果，因为磁盘便宜，而同等规模的内存索引可不便宜。
+
+构建时间的增长同样温和：十万向量时 42 秒，千万向量时不到六分钟，而且每一字节都留在单台机器的 NVMe 磁盘上。
+
+### 千万级 18 ms，推测亿级数据
+
+延迟几乎没变的根本原因在于近似索引的本质。IVF_PQ 索引只搜索少数几个分区而非整个空间，因此查询开销随分区数增长，而非随向量数增长；而磁盘占用线性增长，因为每个向量仍需存储。我们拟合这一趋势并外推到亿级数据。
+
+```python
+def fit_and_extrapolate(df, target: int = 100_000_000) -> dict:
+    n = df["n"].values.astype(float)
+    out = {"target": target}
+    for col in ["build_s", "disk_gb", "p95_ms"]:
+        a, b = np.polyfit(n, df[col].values, 1) # linear fit in n
+        out[col] = round(float(a * target + b), 2)
+    return out
+```
+
+![](https://image.deepnomind.com/blog/image/dd7dc01c16a63c6862099f3ef1d18510)
+
+```python
+#### 输出 ####
+projection to 100M: {
+"build_s": 3075.1,
+"disk_gb": 388.23,
+"p95_ms": 77.58
+}
+```
+
+在亿级向量规模下，外推结果落在 p95 延迟 77.58 ms、索引体积 388 GB，仍然能装进单台机器的 NVMe 磁盘。
+
+此处召回率只有 0.1 左右，仅仅因为向量是随机的，近似索引几乎找不到任何真实结构，所以这次运行测量的是延迟和吞吐量，而非检索质量。在真实语料上，同一索引能保持高召回率，而延迟数字在扩展时依然成立。
+
+### 时间花在哪里
+
+扩展规模是容易的部分。昂贵的是每次查询的 AI 智能体开销，所以我们按阶段归因延迟，看看预算到底花在哪了。
+
+```python
+def aggregate_latencies(results) -> "pd.DataFrame":
+    stages = {}
+    for r in results:
+        for k, v in r.latencies.items():
+            stages.setdefault(k, []).append(v)
+    rows = [{"stage": k, "p50_s": round(np.percentile(v, 50), 3),
+             "p95_s": round(np.percentile(v, 95), 3),
+             "mean_s": round(np.mean(v), 3)} for k, v in stages.items()]
+    return pd.DataFrame(rows).sort_values("mean_s", ascending=False)
+```
+
+![](https://image.deepnomind.com/blog/image/7c85cb7c51156324e160ea59815816be)
+
+```python
+#### 输出 ####
+stage           p50_s   p95_s   mean_s
+total           4.001   17.668  5.823
+retrieve        3.074   11.393  4.166
+verify          1.534   3.878   1.758
+generate        1.451   2.484   1.619
+refine          1.471   2.888   1.575
+route           0.168   0.206   0.170
+grade           0.127   0.431   0.161
+```
+
+一个典型问题中位数耗时 4 秒完成，尾部在 p95 处达到 17.7 秒。检索（retrieve）阶段占了大头，因为要运行嵌入器、两种搜索，以及对 150 个候选的交叉编码器（cross-encoder）重排序（reranking），而在难题上还会通过纠正式 RAG（CRAG，一种自我纠正的检索增强生成循环）循环跑不止一次。
+
+向量搜索本身反而是便宜的部分，这和扩展实验教给我们的道理一样。索引不是瓶颈，围绕索引的语言模型调用才是。
+
+在动手优化之前知道这一点很有价值，因为这意味着提升空间在于减少模型调用、批处理重排序器、缓存评分，而不是换一个更快的向量索引。
+
+# 适用范围与后续方向
+
+最后，我想坦诚说明这套系统是什么、不是什么。幻觉（hallucination）率在不可回答问题集上是 2%，而不是零，因为生成式模型做不到字面意义上的零幻觉。
+
+可回答问题的覆盖率是 0.46，这是我们为安全性付出的有意代价，而风险-覆盖率曲线就是用来在两者之间权衡的旋钮。千万级那次运行是基于合成向量的向量搜索基准测试，证明的是索引在延迟和磁盘上的可扩展性；而真实语料才是让召回率在同一速度下保持高水平的关键。
+
+验证器（忠实度判断器）的 AUROC（ROC 曲线下面积，衡量二分类器区分能力的指标）为 0.702，不错但还不够好，这是下一步最值得改进的地方。
+
+从这里出发，有几个方向值得投入。
+
+1. **更强的验证器**：这道门的质量取决于判断器，所以更好的忠实度模型能同时提升所有下游指标。
+
+2. **大规模真实嵌入**：在真实文档向量上重跑扩展实验，确认召回率保持的同时 18 ms 延迟依然稳固。
+
+3. **分片与量化**：超出单机容量后，索引可以分片到多台机器，而上述正确性逻辑完全不需要改动。
+
+4. **校准覆盖率**：按领域调优阈值，让高风险语料更多弃权（拒绝回答），日常语料更多回答。
+
+这些后续方向都不会改变设计的骨架。索引可以增长，验证器可以改进，阈值可以移动，但契约不变：每一句到达用户的话，都是系统能在检索文本中指出出处的；其余的一切，都变成弃权。
+
+整套系统就是贯彻始终的一个理念。我们不去试图让模型永远正确，而是构建一个只说它能证明的话、否则就弃权的系统。索引扩展到千万向量只需 18 ms，答案保持 0.908 的忠实度，而它无法支撑的问题则返回一句朴素的"我没有足够的证据"，而非自信的猜测。
