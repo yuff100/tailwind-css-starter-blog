@@ -1,0 +1,119 @@
+---
+title: 'CodeGraph 使用指南：将任意文件夹变为知识图谱'
+date: '2026-07-17'
+tags: ['人工智能']
+draft: false
+summary: 'AI 编程助手每次新会话都要花大量 token 在代码库里"翻箱倒柜"找代码，这个隐藏成本比你想象的高得多。CodeGraph 通过 Tree-Sitter 解析代码结构，生成本地 SQLite 知识图谱，通过 MCP 协议让智能体直接查询，平均减少 70% 的工具调用和近一半的 token 成本，并且代码始终保留在本地。'
+---
+
+![](https://image.deepnomind.com/blog/image/45bb2435b218ef7aa019caaa0942c98e)
+
+每次开一个新的 AI 编程助手会话，无论是 Claude Code 还是 Cursor，流程往往都一样：先提问，然后智能体开始循环执行 `ls`、`grep`、`read_file`、`repeat`。它在“探索”代码库，你在为这段检索过程持续支付 token 成本。
+
+这段“先找路再干活”的流程，是很多团队最容易忽略的成本。说白了，我们在让高能力模型反复做检索型体力活。**CodeGraph** 的做法很直接：通过 MCP（模型上下文协议）给代码库提供一张预先建好的结构化地图，让智能体少走弯路，尽快进入问题求解阶段。平均来看，工具调用可减少 70% 以上，token 成本也能下降接近一半。
+
+![](https://image.deepnomind.com/blog/image/49b7758dcb90c2f9aebcecca8730facc)
+
+# 图谱背后的工程
+
+CodeGraph 的实现并不复杂，核心是几层稳定的工程组合。
+
+### 1. Tree-Sitter 解析流水线
+
+CodeGraph 的底层依赖 Tree-Sitter。和正则驱动的搜索不同，它走语法解析路线，能更准确地识别代码中的符号和结构关系。
+
+![](https://image.deepnomind.com/blog/image/ff6df0a84b8e672470197e6aa7343e1a)
+
+### 2. MCP 基础设施桥接
+
+CodeGraph 通过 MCP 与 AI 智能体通信，底层基于 JSON-RPC，把“提问-查询-返回”这条链路标准化。
+
+![](https://image.deepnomind.com/blog/image/1bfec7171e0bdea15f78958795fc7745)
+
+### 3. 优化后的 SQLite 图谱架构
+
+提取出的符号和关系会写入本地 SQLite 图谱，查询速度快，也方便在本机持续迭代。
+
+![](https://image.deepnomind.com/blog/image/96bf883d943796e565fb8f53369abb1a)
+
+# 核心优势：密度与隐私
+
+除了速度，CodeGraph 还有两个在实际项目里很关键的点：**上下文密度**和**隐私**。
+
+### 上下文密度：更优的数据，更少的 token
+
+传统智能体很容易遇到“上下文膨胀”：为了回答一个小问题，先把大段源文件塞进上下文。CodeGraph 会尽量只返回相关符号和关系，让信息更集中，token 更省。
+
+![](https://image.deepnomind.com/blog/image/cd1d7fd010e73f89fd57e0953028457a)
+
+### 隐私：代码永远属于你
+
+在云端服务普及的背景下，隐私是绕不开的话题。CodeGraph 运行在**本地边界**内：源码和 SQLite 图谱都留在你的机器上，智能体也通过本地服务查询，不会把代码暴露给外部索引或训练流程。
+
+![](https://image.deepnomind.com/blog/image/d470f30989f8492893c8c4cdc80b2b4f)
+
+# CodeGraph 工作原理
+
+CodeGraph 的效率来自一条四阶段流水线：把原始代码转成可查询的知识图谱，再把查询能力提供给智能体。
+
+![](https://image.deepnomind.com/blog/image/0ce8ee0097b7663f705d6667f0aebe31)
+
+# 快速上手
+
+如果你想马上试试，流程很短，几步就能跑起来。
+
+![](https://image.deepnomind.com/blog/image/f8f51a61e433d68f3acdae272e059d91)
+
+### 1. 安装
+
+CodeGraph 是一个轻量 CLI 工具，可以直接通过 npm 全局安装：
+
+```bash
+npm install -g @colbymchenry/codegraph
+```
+
+### 2. 索引代码库
+
+进入项目目录后执行 `init`。CodeGraph 会扫描文件、解析语法结构，然后生成本地 SQLite 图谱。
+
+```bash
+codegraph init -i
+```
+
+### 3. 连接 AI 智能体
+
+索引完成后，通过 MCP 桥接把常用的 AI 编程助手（如 Claude Code 或 Cursor）接入。之后智能体可以直接查图谱，不必再做一轮低效探索。
+
+```bash
+codegraph install
+```
+
+# 协作流程：开发者、智能体与图谱
+
+CodeGraph 的价值，主要体现在三方协作上：开发者给目标，智能体做推理，CodeGraph 提供结构化上下文。这样产出的方案通常更贴近代码库的真实状态。
+
+![](https://image.deepnomind.com/blog/image/77c7862454ccafc81b534b04698a0de1)
+
+# 智能体智能图景：CodeGraph 与其他工具
+
+CodeGraph 擅长结构化映射，但它不是孤立存在的，完整工具链包括 [lat.md](https://www.lat.md/) 和 [graphify](https://graphify.net/)。
+
+![](https://image.deepnomind.com/blog/image/cb28066db65442d2fce23553c9ccb2d0)
+
+# CodeGraph 端到端流程
+
+CodeGraph 的端到端流程强调三点：本地优先、隐私可控、容易接入现有编码助手。
+
+![](https://image.deepnomind.com/blog/image/45ff39004c57f50be012f1cd26deb6e4)
+
+通过符号和关系映射，CodeGraph 能让智能体更快把握代码结构。配合 MCP 命令集，智能体可以在复杂仓库中做导航和影响面分析，把一些依赖风险提前暴露。
+
+![](https://image.deepnomind.com/blog/image/d55089337c7a0f0abcac75337a04e2c2)
+
+# 要点总结
+
+CodeGraph 面向的是一个很现实的问题：智能体在“找信息”上花费太久。它通过预索引地图降低这部分开销，让智能体更快进入真正执行阶段。
+
+你可以把 CodeGraph 放进自己的**智能体工具栈**里。Graphify 更偏语义层，**lat.md** 偏意图管理，CodeGraph 负责结构层。三者结合后，智能体在复杂项目里的稳定性和效率都会更好。
+
+核心思路其实很简单：智能体最贵的动作往往是“到处找”；CodeGraph 先把地图建好，让它“按图索骥”。
