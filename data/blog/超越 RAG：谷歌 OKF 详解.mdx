@@ -1,0 +1,321 @@
+---
+title: '超越 RAG：谷歌 OKF 详解'
+date: '2026-07-21'
+lastmod: '2026-07-21'
+tags: ['人工智能']
+draft: false
+summary: '真正的企业知识应该是确定的、可追踪的、对人和机器都易读的，Google OKF 就是这样的操作系统。'
+images: ['https://image.deepnomind.com/blog/image/efc403be2e666c675edd5a2d898620fe']
+authors: ['default']
+---
+
+![](https://image.deepnomind.com/blog/image/efc403be2e666c675edd5a2d898620fe)
+
+## 引言
+
+过去三年里，工程师面对任何企业知识管理问题，答案都是标准化的：
+
+> "搭个 RAG 流水线吧。"
+
+简单粗暴，百试百灵。
+
+但现在是 2026 年。RAG 万能论的裂缝，已经大到无法被忽视。
+
+分块会破坏表结构，向量检索永远是赌（可能找到对的，也可能找到三年前过时的数据），嵌入与数据的同步简直就是**噩梦**。
+
+然后谷歌云站出来了，开源了一个叫 **Open Knowledge Format（OKF v0.1）** 的东西，直接消除了"RAG 万能论"的噪音。
+
+OKF 不是数据库，不是 LLM 框架，也不是又一个 SDK。
+
+它是一个**标准**，一个供应商中立、可以随处运行的标准。将 AI 研究人员（比如 Andrej Karpathy）多年来一直在鼓吹的 **"LLM Wiki 范式"** （就是那个结构化、互联的"机器大脑"概念）正式化了。
+
+核心思想很简单：
+
+**从概率性的「瞎猜」转向确定性的「精确导航」。**
+
+对，就这么简单。
+
+## OKF 是什么？说白了，就是用 Markdown 管理公司的脑子
+
+OKF 用标准化的方式组织企业知识、业务逻辑和架构定义。任何 AI 都能原生理解、自如遍历，不需要什么自定义翻译层。
+
+核心就是：**一个纯文本 Markdown 文件目录 + YAML 前言**。
+
+是的，就这么平凡。
+
+## 知识包长什么样？
+
+在 OKF 中，**目录就是身份**。不是简单的把文件扔进索引，而是把信息整理成超级专注的单个"概念"。
+
+概念可能是 API 契约、财务指标、数据库架构定义 —— 任何需要「唯一真实版本」的东西。
+
+**目录结构示例：**
+
+```
+company_brain/
+├── index.md               # 根目录用于递进式展开
+├── engineering/
+│   ├── index.md
+│   └── service_mesh.md    # 架构概念
+└── analytics/
+    ├── index.md
+    ├── tables/
+    │   ├── customers.md   # 单个数据库概念文件
+    │   └── billing.md
+    └── metrics/
+        └── active_users.md # 精确的业务定义
+```
+
+每个概念文件都遵循严格但精简的设计：顶部是**YAML 前言块**（只需一个必需字段：`type`），其后是**自由格式的 Markdown 正文**。
+
+**真实 OKF 文件示例（描述关键业务指标）：**
+
+```yaml
+---
+type: metric
+id: analytics/metrics/active_users
+title: Weekly Active Users (WAU)
+owner: data-eng@company.com
+updated_at: 2026-06-15
+citations:
+  - source: "https://github.com/internal-org/dbt/models/wau.sql"
+---
+# 周活跃用户数（WAU）
+
+过去 7 天内触发至少一次核心后端 API 事务的唯一用户 ID 的总数。
+
+## 计算规则
+
+明确排除内部 QA 和测试账户：
+`WHERE user_id NOT IN (SELECT user_id FROM staging.internal_testers)`
+
+## 相关组件
+
+- 参见 [[analytics/tables/customers]] 了解主要用户维度映射。
+- 参见 [[analytics/tables/billing]] 将使用情况与活跃订阅周期关联。
+```
+
+## OKF 为什么能打败 RAG？三个原因
+
+OKF 在传统企业维基和 RAG 都失败的地方胜出。原因是什么？
+
+### ① 格式 > 平台
+
+不需要云账户，不需要重型软件，不需要定制 SDK。
+
+就是 Git，纯 Git。版本控制、PR 审计、谁改了什么、什么时候改的 —— 一切都清清楚楚。
+
+### ② AI 自动整理，永远不用手动维护
+
+人类维护文档？别笑了，文档三天就烂了。
+
+在 OKF 中，后台 AI Agent 是维护引擎。代码更新了？自动改 Markdown。数据库迁移了？自动更新定义。链接坏了？自动修复。
+
+log.md 里全是记录。人只需要确保代码是对的，知识库自动跟着变。
+
+### ③ 不猜测，用显式链接
+
+RAG：用余弦相似度「猜测」什么相关。99% 的时候都猜错。
+
+OKF：直接用 `[[concept_path]]` Markdown 链接。不是猜，是**确切的、绝对的、逻辑的**。
+
+AI Agent 不用在数据库里瞎摸，而是按照明确的地图逐步推进。
+
+## 现实场景：同样的问题，结局大不同
+
+### 任务目标
+
+你向 AI Agent 提出请求："为第二季度编写执行级 SQL 查询，计算流失率。"
+
+**场景**：你问 AI「给出 Q2 流失率的 SQL 查询」
+
+**用 RAG 的结局**：
+
+1️⃣ Agent 把问题转成向量
+2️⃣ 在向量数据库里瞎搜（数千个碎片 PDF、Confluence、Slack)
+3️⃣ 得到三个结果：2023 年的 PPT、一份过时的维基、两个工程师吵架的记录
+4️⃣ LLM 被搞懵了。写出来的 SQL 查错了表，拿错了数据
+
+**结果**：报告全是错的。
+
+**用 OKF 的结局**：
+
+1️⃣ Agent 打开公司知识库的根目录 `index.md`
+2️⃣ 直接跳到 `analytics/metrics/churn_rate.md` （不是「可能是」，就是这个文件）
+3️⃣ 读到：流失率的精确定义 + 最新 SQL 片段 + 审计日期
+4️⃣ 点击链接 `[[analytics/tables/customers]]`，自动加载客户表的最新架构定义和关联键
+5️⃣ **第一次就完全正确**，还带着源文件、更新时间、负责人信息
+
+**结果**：报告是对的。
+
+## 直观对比：RAG vs OKF
+
+| 特性 | RAG（概率式） | OKF（确定式） |
+|------|------|------|
+| **生命周期** | 分段碎片，时刻过期 | 结构化，保持最新 |
+| **查询方式** | 猜测相关性，常常猜错 | 显式链接，百发百中 |
+| **人能读吗** | 不能。只有工程师能用 | 能。GitHub、Obsidian 直接看 |
+| **维护成本** | 高（不断重建索引、嵌入漂移） | 低（一条 git commit） |
+| **最适合的活儿** | 海量杂乱的过时资料 | 公司的"绝对真实信息" |
+
+## 别让 RAG 下岗：混合架构才是未来
+
+RAG 不会消失，只是**用错了地方**。
+
+用 RAG 去找公司税务 ID 或者"收入"的精确定义？从根本上就是坏设计，应该用 OKF。
+
+真正的智能架构是这样的：
+
+```
+┌──────────────────────┐
+│     用户的问题        │
+└──────────┬───────────┘
+           │
+           ▼
+      ┌────────────┐
+      │ 智能路由器  │（这很关键）
+      └────┬───────┘
+           │
+      ┌────┴──────────┐
+      ▼               ▼
+ [ OKF ]         [ RAG ]
+  规则库         垃圾场
+ 架构定义       历史数据
+ 最新标准       随意搜索
+```
+
+**三层堆栈工作模式：**
+
+- **第一层** → 问 OKF（规范答案）
+- **第二层** → 搜 GitHub Wiki（有记录的东西）
+- **第三层** → 用 RAG（死马当活马医）
+
+大多数问题在第一层就解决了，只有新探索、模糊的东西才到第三层。
+
+通过这种方式，组织得到的 AI 系统既足够强大，又足够稳定。OKF 没有取消检索，而是给 AI Agent 画了一张**精准地图**。
+
+## 详细技术参考
+
+### 最小化规范
+
+OKF 文件的本质很简单：Markdown + YAML 头。
+
+**YAML 前言（必需）：**
+- `type`：分类标签（`metric`、`schema`、`runbook` 等）
+
+**前言（推荐）：**
+- `id`：唯一标识
+- `title`：人类标题
+- `owner`：责任人
+- `updated_at`：更新时间
+- `citations`：源代码位置
+- `tags`：搜索标签
+
+### 显式链接 = 知识图谱
+
+```markdown
+参见 [[analytics/tables/customers]] 了解用户维度。
+相关：[[engineering/service_mesh]]
+依赖：[[infrastructure/databases/postgres]]
+```
+
+系统自动做三件事：
+1. **完整性检查**：不允许链接到不存在的文件
+2. **反向跟踪**：自动生成反向引用（谁在引用我）
+3. **影响分析**：文件更新时，自动识别所有受影响的文件
+
+### 版本控制与审计
+
+由于 OKF 包是纯文本，整个知识库可完全存储在 Git 中：
+
+```bash
+# 提交知识更新
+git add company_brain/analytics/metrics/churn_rate.md
+git commit -m "更新流失率计算规则，排除试用账户"
+
+# 查看历史变更
+git log --follow company_brain/analytics/metrics/churn_rate.md
+
+# 追踪谁修改了什么
+git blame company_brain/analytics/metrics/churn_rate.md
+```
+
+每次提交都创建审计痕迹，包含：谁改的、什么时候改的、为什么改的。
+
+### 实施五步走
+
+**1️⃣ 建目录结构**
+```bash
+mkdir -p company_brain/{engineering,analytics,operations}
+```
+
+**2️⃣ 写根索引**
+根目录下放 `index.md`，让 Agent 知道整个知识库长什么样。
+
+**3️⃣ 建核心概念文件**
+每个真实信息一个文件，API 一个、财务指标一个、数据表一个。
+
+**4️⃣ 配置自动维护**
+设置 CI/CD，当代码更新时，自动修改相关 OKF 文件。
+
+**5️⃣ 用起来**
+给 AI Agent 指向 `company_brain` 目录，它就能自动导航了。
+
+### 与现有工具融合
+
+**GitHub/GitLab**
+- OKF 就是一个代码库的子目录
+- PR 审批知识更新
+- Actions 自动检查链接和拼写
+
+**Obsidian**
+- 原生支持 `[[links]]`
+- 自动渲染成交互式知识图谱
+- 本地编辑，云端同步
+
+**AI Agent**
+```python
+# Agent 直接读，自动根据链接加载依赖
+with open("company_brain/analytics/metrics/churn.md") as f:
+    definition = f.read()
+    # 自动识别 [[analytics/tables/customers]]
+    # 自动加载引用的文件
+```
+
+### 性能考量
+
+- **包大小**：纯文本 Markdown 极其轻量。即使 100,000 个概念文件也只需几 MB 存储空间
+- **搜索速度**：Git 原生全文搜索比向量数据库快 100 倍
+- **更新延迟**：从文件修改到 Agent 可读的延迟 < 100ms
+
+### 与 RAG 的共存
+
+许多组织的最终架构是三层混合：
+
+1. **OKF 层**（确定性）：公司内部真实信息、规则、架构
+2. **搜索层**（混合）：GitHub、wiki、文档站点的全文搜索
+3. **RAG 层**（概率）：历史日志、用户交互、外部知识
+
+AI Agent 会：
+1. 首先查询 OKF 以获取规范答案
+2. 如果 OKF 中找不到，使用搜索层浏览文档
+3. 最后才利用 RAG 进行探索性搜索
+
+## 进阶资源
+
+如需 Open Knowledge Format 的完整逐步技术分解，请查看[详细的 OKF 规范和包构建技术分解视频](https://www.youtube.com/watch?v=T33iI6izAKw)。此视频资源解释了标准的结构设计，审视了 GitHub 规范，并展示了如何使用纯 Markdown 文件为 AI Agent 开始组织知识。
+
+**官方资源：**
+- [OKF GitHub Specification](https://github.com/google-cloud/open-knowledge-format)
+- [OKF Community Examples](https://github.com/topics/open-knowledge-format)
+- [Industry Implementations](https://cloud.google.com/blog/okf-adoption-stories)
+
+## 总结
+
+Google 这次真的找对了问题。
+
+知识不是模糊的数据点。企业知识必须是**精确的、可追踪的、对人和机器都易读的**。
+
+RAG 很强大，擅长处理"未知中的未知"。但对于已经知道的东西 —— 比如"流失率怎么算"、"这个 API 的契约是什么"、"上次事故的复盘是什么" —— 需要的是**确定性和精准性**，不是概率式的猜测。
+
+这就是 OKF 的价值所在。
