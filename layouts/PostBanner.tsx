@@ -10,6 +10,7 @@ import SectionContainer from '@/components/SectionContainer'
 import siteMetadata from '@/data/siteMetadata'
 import ScrollTopAndComment from '@/components/ScrollTopAndComment'
 import TOC from '@/components/TOC'
+import AdSense from '@/components/AdSense'
 
 interface LayoutProps {
   content: CoreContent<Blog>
@@ -41,10 +42,22 @@ export default function PostMinimal({ content, next, prev, children }: LayoutPro
             </div>
           </div>
           <div className="grid-rows-[auto_1fr] pb-8 xl:grid xl:grid-cols-[1fr_250px] xl:gap-x-6">
-            <div className="prose dark:prose-invert max-w-none py-4">{children}</div>
+            <div>
+              <div className="prose dark:prose-invert max-w-none py-4">{children}</div>
+              <AdSense
+                className="pt-2 pb-6"
+                slot={siteMetadata?.ads?.adsense?.inArticleSlot}
+                minHeight={100}
+              />
+            </div>
             <aside className="hidden xl:block xl:pt-4">
               <div className="sticky top-20 max-h-[calc(100vh-5rem)] overflow-auto">
                 <TOC toc={toc} />
+                <AdSense
+                  className="mt-6"
+                  slot={siteMetadata?.ads?.adsense?.sidebarSlot}
+                  minHeight={250}
+                />
               </div>
             </aside>
           </div>

@@ -49,6 +49,17 @@ const siteMetadata = {
     //   googleAnalyticsId: '', // e.g. G-XXXXXXX
     // },
   },
+  ads: {
+    adsense: {
+      // Keep false by default. Turn on in production after account/site approval.
+      enabled: process.env.NEXT_PUBLIC_ADSENSE_ENABLED === 'true',
+      // Accept either "ca-pub-xxxx" or "xxxx".
+      publisherId: process.env.NEXT_PUBLIC_ADSENSE_PUBLISHER_ID,
+      inArticleSlot: process.env.NEXT_PUBLIC_ADSENSE_IN_ARTICLE_SLOT,
+      leftSidebarSlot: process.env.NEXT_PUBLIC_ADSENSE_LEFT_SIDEBAR_SLOT,
+      sidebarSlot: process.env.NEXT_PUBLIC_ADSENSE_SIDEBAR_SLOT,
+    },
+  },
   newsletter: {
     // supports mailchimp, buttondown, convertkit, klaviyo, revue, emailoctopus, beehive
     // Please add your .env file and modify it according to your selection

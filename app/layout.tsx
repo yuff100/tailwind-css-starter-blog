@@ -3,6 +3,7 @@ import 'pliny/search/algolia.css'
 import 'remark-github-blockquote-alert/alert.css'
 
 import { Space_Grotesk } from 'next/font/google'
+import Script from 'next/script'
 import { Analytics, AnalyticsConfig } from 'pliny/analytics'
 import { Analytics as VercelAnalytics } from '@vercel/analytics/next'
 import { SearchProvider, SearchConfig } from 'pliny/search'
@@ -61,6 +62,14 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const basePath = process.env.BASE_PATH || ''
+  const adsenseConfig = siteMetadata?.ads?.adsense
+  const rawPublisherId = adsenseConfig?.publisherId
+  const publisherId = rawPublisherId
+    ? rawPublisherId.startsWith('ca-pub-')
+      ? rawPublisherId
+      : `ca-pub-${rawPublisherId}`
+    : ''
+  const enableAdSense = Boolean(adsenseConfig?.enabled && publisherId)
 
   return (
     <html
@@ -97,6 +106,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <link rel="alternate" type="application/rss+xml" href={`${basePath}/feed.xml`} />
       <body className="bg-white pl-[calc(100vw-100%)] text-black antialiased dark:bg-gray-950 dark:text-white">
         <ThemeProviders>
+          {enableAdSense && (
+            <Script
+              id="adsense-script"
+              async
+              strategy="afterInteractive"
+              src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${publisherId}`}
+              crossOrigin="anonymous"
+            />
+          )}
           <Analytics analyticsConfig={siteMetadata.analytics as AnalyticsConfig} />
           <SectionContainer>
             <SearchProvider searchConfig={siteMetadata.search as SearchConfig}>

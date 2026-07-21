@@ -9,6 +9,7 @@ import SectionContainer from '@/components/SectionContainer'
 import siteMetadata from '@/data/siteMetadata'
 import ScrollTopAndComment from '@/components/ScrollTopAndComment'
 import TOC from '@/components/TOC'
+import AdSense from '@/components/AdSense'
 
 interface LayoutProps {
   content: CoreContent<Blog>
@@ -43,10 +44,20 @@ export default function PostLayout({ content, next, prev, children }: LayoutProp
           <div className="grid-rows-[auto_1fr] divide-y divide-gray-200 pb-8 xl:grid xl:grid-cols-[1fr_250px] xl:gap-x-6 xl:divide-y-0 dark:divide-gray-700">
             <div className="min-w-0 divide-y divide-gray-200 xl:col-span-1 xl:row-span-2 xl:pb-0 dark:divide-gray-700">
               <div className="prose dark:prose-invert max-w-none pt-10 pb-8">{children}</div>
+              <AdSense
+                className="pt-2 pb-6"
+                slot={siteMetadata?.ads?.adsense?.inArticleSlot}
+                minHeight={100}
+              />
             </div>
             <aside className="hidden xl:block xl:pt-11">
               <div className="sticky top-20 max-h-[calc(100vh-5rem)] overflow-auto">
                 <TOC toc={toc} />
+                <AdSense
+                  className="mt-6"
+                  slot={siteMetadata?.ads?.adsense?.sidebarSlot}
+                  minHeight={250}
+                />
               </div>
             </aside>
           </div>

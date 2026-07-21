@@ -10,6 +10,7 @@ import Tag from '@/components/Tag'
 import siteMetadata from '@/data/siteMetadata'
 import ScrollTopAndComment from '@/components/ScrollTopAndComment'
 import TOC from '@/components/TOC'
+import AdSense from '@/components/AdSense'
 
 const editUrl = (path) => `${siteMetadata.siteRepo}/blob/main/data/${path}`
 const discussUrl = (path) =>
@@ -143,10 +144,20 @@ export default function PostLayout({ content, authorDetails, next, prev, childre
                     &larr; 返回文章列表
                   </Link>
                 </div>
+                <AdSense
+                  className="pt-6"
+                  slot={siteMetadata?.ads?.adsense?.leftSidebarSlot}
+                  minHeight={250}
+                />
               </footer>
             </div>
             <div className="min-w-0 divide-y divide-gray-200 xl:col-span-1 xl:row-span-2 xl:pb-0 dark:divide-gray-700">
               <div className="prose dark:prose-invert max-w-none pt-10 pb-8">{children}</div>
+              <AdSense
+                className="pt-2 pb-6"
+                slot={siteMetadata?.ads?.adsense?.inArticleSlot}
+                minHeight={100}
+              />
               {siteMetadata.comments && (
                 <div
                   className="pt-6 pb-6 text-center text-gray-700 dark:text-gray-300"
@@ -159,6 +170,11 @@ export default function PostLayout({ content, authorDetails, next, prev, childre
             <aside className="hidden xl:row-span-2 xl:block xl:pt-11">
               <div className="sticky top-20 max-h-[calc(100vh-5rem)] overflow-auto">
                 <TOC toc={toc} />
+                <AdSense
+                  className="mt-6"
+                  slot={siteMetadata?.ads?.adsense?.sidebarSlot}
+                  minHeight={250}
+                />
               </div>
             </aside>
           </div>
