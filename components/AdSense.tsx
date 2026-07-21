@@ -12,7 +12,8 @@ declare global {
 interface AdSenseProps {
   slot?: string
   className?: string
-  format?: 'auto' | 'rectangle' | 'horizontal' | 'vertical'
+  format?: 'auto' | 'fluid' | 'rectangle' | 'horizontal' | 'vertical'
+  layout?: 'in-article'
   minHeight?: number
 }
 
@@ -25,6 +26,7 @@ export default function AdSense({
   slot,
   className,
   format = 'auto',
+  layout,
   minHeight = 90,
 }: AdSenseProps) {
   const pushedRef = useRef(false)
@@ -111,9 +113,10 @@ export default function AdSense({
     <div className={className} aria-label="advertisement">
       <ins
         className="adsbygoogle block w-full overflow-hidden"
-        style={{ display: 'block', minHeight: `${minHeight}px` }}
+        style={{ display: 'block', minHeight: `${minHeight}px`, textAlign: 'center' }}
         data-ad-client={publisherId}
         data-ad-slot={slot}
+        data-ad-layout={layout}
         data-ad-format={format}
         data-full-width-responsive="true"
       />

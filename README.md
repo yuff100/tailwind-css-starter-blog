@@ -158,6 +158,12 @@ comments: {
 }
 ```
 
+如果使用环境变量方式（推荐），请在部署平台中配置：
+
+```bash
+NEXT_PUBLIC_WALINE_SERVER_URL=https://your-waline-domain
+```
+
 ## 🚀 部署
 
 ### Vercel 部署 (推荐)

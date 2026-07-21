@@ -156,6 +156,8 @@ export default function PostLayout({ content, authorDetails, next, prev, childre
               <AdSense
                 className="pt-2 pb-6"
                 slot={siteMetadata?.ads?.adsense?.inArticleSlot}
+                layout="in-article"
+                format="fluid"
                 minHeight={100}
               />
               {siteMetadata.comments && (

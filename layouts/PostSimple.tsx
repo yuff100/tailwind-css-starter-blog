@@ -47,6 +47,8 @@ export default function PostLayout({ content, next, prev, children }: LayoutProp
               <AdSense
                 className="pt-2 pb-6"
                 slot={siteMetadata?.ads?.adsense?.inArticleSlot}
+                layout="in-article"
+                format="fluid"
                 minHeight={100}
               />
             </div>

@@ -99,7 +99,8 @@ const siteMetadata = {
       shortname: process.env.NEXT_PUBLIC_DISQUS_SHORTNAME,
     },
     walineConfig: {
-      serverURL: process.env.NEXT_PUBLIC_WALINE_SERVER_URL,
+      // Support both public and legacy/private env names at build time.
+      serverURL: process.env.NEXT_PUBLIC_WALINE_SERVER_URL || process.env.WALINE_SERVER_URL,
     },
   },
   search: {
