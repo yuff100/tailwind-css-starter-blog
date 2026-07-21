@@ -51,3 +51,5 @@ agents
 .agents
 .venv-wechat-article
 .session-log
+
+.venv-tools
