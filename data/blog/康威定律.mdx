@@ -1,0 +1,81 @@
+---
+title: '康威定律'
+date: '2021-10-31'
+lastmod: '2021-10-31'
+tags: ['架构']
+draft: false
+summary: '康威定律告诉我们：软件架构反映了组织架构。因此通过调整组织架构，反过来也能推动软件架构的演进。'
+images: []
+authors: ['default']
+---
+
+> _康威定律告诉我们：软件架构反映了组织架构。因此通过调整组织架构，反过来也能推动软件架构的演进。原文：[Conway’s Law](https://just4sky.medium.com/conways-law-99fbbff9ccf0)_
+
+通过改变组织架构来改变软件架构。
+
+马尔文·康威（Melvin Conway）在他发表的论文《How Do Committees Invent?》中，将45段观点总结成了一句话：
+
+> 任何组织所设计的系统（此处的定义比信息系统宽泛得多）架构，都不可避免的反映为该组织沟通结构的副本。——康威定律
+
+康威定律认为，软件架构最终会是沟通（组织）结构的映射。
+
+下面是一个前后端团队的常见例子。
+
+![](https://image.deepnomind.com/blog/image/f1039b2bcb5d008e9a7ce93c85e6ac40)
+
+下面是我们想要的架构。
+
+![](https://image.deepnomind.com/blog/image/0798fd359ca8c96bbb108e44734f34f9)
+
+然后我们根据经验，组织前端和后端团队。
+
+![](https://image.deepnomind.com/blog/image/93fecc1adfeacc013c17b5f4db0004ae)
+
+最终后端团队将在同一个应用程序代码中处理API和后端工作，并将其作为单个应用程序部署。
+
+这也证明了Ruth Malan的话：
+
+> 如果系统的体系架构和组织的体系架构不一致，组织的体系架构将会获胜。——Ruth Malan
+
+不过，它适用于单一代码库（monorepo）吗?
+
+### 康威定律与软件模块化
+
+假设我们有一个单体应用，有许多团队在一个单一代码库（monorepo）里提交代码，康威定律适用这种情况吗？
+
+2008年，艾伦·D·麦科马克（Alan D. MacCormack）、约翰·鲁斯纳克（John Rusnak）和卡莉斯·Y·鲍德温（Cariss Y. Baldwin）对“镜像”假设进行了[测试](https://hbswk.hbs.edu/item/exploring-the-duality-between-product-and-organizational-architectures-a-test-of-the-mirroring-hypothesis)：
+
+> 与紧密耦合的组织相比，松散耦合的组织倾向于开发更为模块化的产品。
+
+他们在研究中分析了功能相同但由两种相反的组织模式构建的软件，商业（紧耦合）和开源（松耦合）。他们使用一种称为设计结构矩阵（DSMs，Design Structure Matrices）的技术来可视化不同软件的架构，通过计算度量来比较它们的模块化级别。
+
+结果显示在模块化方面两者表现出显著的差异。
+
+![](https://image.deepnomind.com/blog/image/a49a5937e6c5eb81405d390553096835)
+
+在商业组织中，开发团队在一起工作，通过面对面的交互来解决问题，由于可以很方便的找到其他模块的开发人员，他们可以实现性能的最优化。因此自然而然的，生产出了紧密耦合（如左图）的软件。
+
+在开源组织中，大多数开发人员很少或从不见面。由于通信有限，因此模块化的好处更大。软件需要模块化（如图所示），这样贡献者才能很容易的理解设计，以便开发新特性或修复缺陷，而不会影响系统的其他部分。
+
+### 康威定律与团队设计
+
+当组织从一个小型跨职能团队成长为许多大型专业团队时，通常我们会围绕技术组织团队，因此我们将拥有几个前端团队（Web和移动）和一个后端团队。
+
+团队每天都要紧密合作，在所有平台上发布功能。沟通路径可能是这样的：
+
+![](https://image.deepnomind.com/blog/image/cf7265e4053006eaa03f805c29422096)
+
+很自然的，最终软件体系架构将反映沟通的路径。
+
+另一方面，如果我们将团队组织为跨功能团队，并且每个团队都独立工作，那么我们将生成一个面向服务的或微服务的体系架构。
+
+![](https://image.deepnomind.com/blog/image/eed4e82ac3ebdbeb80335bdc03de7fa8)
+
+这是否意味着设计软件架构是毫无意义的？简单来说答案是否定的。
+
+> “逆康威模式（Inverse Conway Maneuver）”建议我们演进团队和组织架构，以促进实现想要的架构。——[逆康威模式](https://www.thoughtworks.com/radar/techniques/inverse-conway-maneuver)
+
+软件架构对于构建快速、安全的软件至关重要。通过优化我们的团队架构，以实现所需的架构，并支持团队获得更快、更安全的完成工作的能力。
+
+> 你好，我是俞凡，在Motorola做过研发，现在在Mavenir做技术工作，对通信、网络、后端架构、云原生、DevOps、CICD、区块链、AI等技术始终保持着浓厚的兴趣，平时喜欢阅读、思考，相信持续学习、终身成长，欢迎一起交流学习。  
+> 微信公众号：DeepNoMind
