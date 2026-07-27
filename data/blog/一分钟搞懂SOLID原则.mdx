@@ -1,0 +1,73 @@
+---
+title: '一分钟搞懂SOLID原则'
+date: '2021-10-30'
+lastmod: '2021-10-30'
+tags: ['架构']
+draft: false
+summary: 'SOLID原则是面向对象设计的一个基本原则，通过这篇短文我们可以很快了解SOLID原则的核心思想。'
+images: []
+authors: ['default']
+---
+
+> _SOLID原则是面向对象设计的一个基本原则，通过这篇短文我们可以很快了解SOLID原则的核心思想。原文：[SOLID Principles — Concise and brief explanation](https://medium.com/front-end-weekly/solid-principles-concise-and-brief-explanation-96790dc63b63)_
+
+大家好，今天，我尝试用最简单的方式告诉大家，什么是SOLID原则。
+
+SOLID的意思是：
+
+![](https://image.deepnomind.com/blog/image/9591025b5e79f9e93661bb27370e15ce)
+
+### 1. 单一职责原则（Single responsibility principle）
+
+*   _每个类应该只有一个变更的理由。_
+    
+*   _将不相关的功能解耦，并将它们隔离到独立的类中。_
+    
+*   _可读性、可重用性和可维护性。_
+    
+
+### 2. 开闭原则（Open-closed principle）
+
+*   _在有可能需要变更的代码前面引入抽象。_
+    
+*   _只在需求合理可预测的情况下使用。_
+    
+*   _将代码与需求变更隔离开来。_
+    
+
+### 3. 里氏替换原则（Liskov substitution principle）
+
+*   _在继承层次结构中定义适当的子类型非常重要_
+    
+*   **_七大规则_**：
+    
+    1.  确定的参数（Contravariance of arguments）
+    2.  确定的结果（Contravariance of result）
+    3.  前置条件（Pre Conditions）
+    4.  后置条件（Post Conditions）
+    5.  例外规则（Exception rule）
+    6.  内变规则（In-variant rule）
+    7.  限制规则（Constraint rule）
+
+*   _对于将被其他人复用的代码尤其重要。_
+    
+*   _可以安全的使用子类。_
+    
+### 4. 接口分离原则（Interface segregation principle）
+
+*   _客户端应该只依赖于实际使用的功能。_
+    
+*   _最小知识和最小耦合原则。_
+    
+*   _健壮的设计，防止设计错误，更好的可读性。_
+    
+### 5. 依赖反转原则（Dependency inversion principle）
+
+*   _管理抽象的使用。_
+    
+*   _通过抽象反转源代码的依赖关系。_
+    
+*   _防止变更出错，提高可重用性，减少对外部模块的依赖。_
+
+> 你好，我是俞凡，在Motorola做过研发，现在在Mavenir做技术工作，对通信、网络、后端架构、云原生、DevOps、CICD、区块链、AI等技术始终保持着浓厚的兴趣，平时喜欢阅读、思考，相信持续学习、终身成长，欢迎一起交流学习。  
+> 微信公众号：DeepNoMind
