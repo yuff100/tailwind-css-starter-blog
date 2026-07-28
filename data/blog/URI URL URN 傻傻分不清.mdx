@@ -1,0 +1,105 @@
+---
+title: 'URI/URL/URN，傻傻分不清？'
+date: '2021-11-21'
+lastmod: '2021-11-21'
+tags: ['认知']
+draft: false
+summary: '当我们上网的时候，浏览器地址栏里显示的那一串字符串是什么意思？这串字符叫URL，是URI的一种，还有个兄弟叫URN，这篇文章就带你了解这几个概念。'
+images: []
+authors: ['default']
+---
+
+> _当我们上网的时候，浏览器地址栏里显示的那一串字符串是什么意思？这串字符叫URL，是URI的一种，还有个兄弟叫URN，这篇文章就带你了解这几个概念。原文：[URI vs URL vs URN](https://enlear.academy/uri-vs-url-vs-urn-51b8167cafad)_
+
+![](https://image.deepnomind.com/blog/image/2f72f2fb6abf426558f9f84322e5f75e)
+
+> _当我们处理互联网和在线内容时，URI、URL和URN是我们能听到的最熟悉的单词，下面让我们深入了解它们的含义……_
+
+* * *
+
+# URI - 统一资源识别符（Uniform Resource Identifier）
+
+URI是标识所有连接到万维网（World Wide Web）的资源的通用术语，是用来标识逻辑资源或者物理资源的字符串序列。换句话说，它可以用来识别互联网上的资源的位置、或名称、或两者兼有。URI有两个主要的子集，即URL和URN。
+
+![](https://image.deepnomind.com/blog/image/61c16dd32725818bed792fae11d2b7a1)
+
+_**URI语法**：scheme:[//[user:password@]host[:port]][/]path[?query][#fragment]_
+
+_**URI示例**：foo://example.com:8042/over/there?name=ferret#nose_
+
+**Scheme**：URI的起始点，并与URI协议相关。URI schema对大小写不敏感，后面带有一个“:”。尽管在实践中可以使用未注册的schema，但URI schema应该向Internet Assigned Numbers Authority (IANA)注册。几个流行的URI schema的例子：HTTP、HTTPS、FTP和mailto。
+
+**Authority（权限）**：Authority字段是位于schema字段之后的第二个条目，以两个斜杠(//)开头。这个字段由多个子字段组成：
+
+*   _**authentication（认证信息）**\-可选的字段和用户名，密码，由冒号隔开，后面跟着“@”符号_
+*   _**host（主机名）**—注册的名称或IP地址，出现在“@”符号之后_
+*   _**port（端口号）**\-可选字段，后面跟着一个冒号_
+
+**Path（路径）**：Path是第三个字段，由斜杠分隔的段序列来表示，用来提供资源的位置。注意，不管authority部分存在或不存在，path都应该以一个斜杠开始，而不是双斜杠(//)。
+
+**Query（查询）**：Query是第四个字段，是URI的可选字段，包含一串非结构数据并以“?”和Path隔开。
+
+**Fragment（片段）**：Fragment是第五个组成部分，也是一个可选字段，提供指向辅助资源的方向，并以“#”开始。简单来说，Fragment字段可以用于指向HTML页面的特定元素(主资源)。
+
+* * *
+
+# URL - 统一资源定位符（Uniform Resource Locator）
+
+如上所述，**URL**是**URI**的一个子集。**URL**是一个给定唯一Web资源的地址，表明了这个唯一的Web资源的位置，用户可以通过**URL**浏览互联网。如果我们在任何应用程序中点击任何超链接，它会将我们重定向到相关的**URL**，这些**URL**也可以很容易的输入到浏览器地址栏中，并可以加载特定的资源。
+
+_**URL语法**：scheme://host:port/path?query-string#fragment-id_
+
+***URL示例**: https://medium.com/p/51b8167cafad*
+
+**Scheme**：URL的第一部分，表示浏览器请求资源时必须使用的协议。常见例子有HTTPS(安全版本)和HTTP(非安全版本)。
+
+**Authority**：Authority是URL的第二个字段，同样使用“//”开头，包含一些子部分：
+
+*   _**host（主机名）**—分配给主机的域名或IP地址，是主机的本地名称和它的父域名的组合_
+*   _**port（端口）**—表示用于访问Web服务器上特定资源的标识，通常80表示HTTP, 443表示HTTPS，这是一个可选字段_
+
+**Path to resource（资源路径）**：路径是URL的第三个字段，是Web服务器上资源的路径
+
+**Query（查询）**：查询是URL的第四个字段，由传递给服务器端脚本的数据组成，并在Web服务器上运行。查询将执行带有“?”的搜索参数，参数通常由名字和值对组成的字符串组成，并由“&”分隔。
+
+**Fragment Identifier（片段标识符）**：片段是可选字段，用于表示页面中的位置，由“#”标识片段标识符。
+
+* * *
+
+# URN - 统一资源名（Uniform Resource Name）
+
+**URN**是一种具有静态名称的互联网资源，即使它的数据被移动到另一个位置也仍然有效。**URL**在内容被移动后就失效了，与之不同的是，**URN**可以始终跟踪Web上某些数据的资源，从而解决了频繁移动数据的问题。
+
+更进一步的，我们可以说，当用户知道唯一资源的位置时，可以使用URL，但URN只需要知道特定资源的名称，而不用指定其位置。
+
+_**URN语法**：scheme:NID: NSS_
+
+_**URN示例**：urn:ISSN:0167–6423_
+
+**Scheme**：URN的前导部分，以“:”结尾，不区分大小写
+
+**NID（Namespace ID）**：URN的第二个字段，是向IANA注册的命名空间标识符。NID后面跟着一个":"，可以由字母、数字和" - "组成。
+
+**NSS（Namespace Specific String）**：NID之后的下一个字段，是一个特定于命名空间的字符串。NID确定NSS的语法解释。NSS可以由ASCII字母、数字、标点符号和特殊字符组成。
+
+*   _2017年之后，又添加了q-component和r-component，用于向命名资源和解析器传递参数。_
+
+* * *
+
+# 区分识别URI、URL和URN的小技巧
+
+*   URL是一个可以检索网络资源的链接；URN是唯一标识符，但不能创建可单击的链接。
+    
+*   人们经常用名字作为例子来描述URI和URN。人的名字就像URI，因为它标识了一个人，但并没有告诉你在世界上的哪个地方可以找到这样一个特定的人，甚至也没有告诉你我们谈论的是哪个人。
+    
+*   简单的名字不能作为URN的例子，因为没有唯一性，世界上有很多人有同样的名字。URN是一个带有全局唯一标识符的名称，如身份证号或社会保险号。
+    
+*   在网络中，URN很容易被发现。
+    
+
+_本文到此结束，如果你正好想要了解关于URI、URL和URN的知识，希望这篇文章对你有用。_
+
+感谢阅读本文…!!!🤗🤗🤗
+
+> 你好，我是俞凡，在Motorola做过研发，现在在Mavenir做技术工作，对通信、网络、后端架构、云原生、DevOps、CICD、区块链、AI等技术始终保持着浓厚的兴趣，平时喜欢阅读、思考，相信持续学习、终身成长，欢迎一起交流学习。  
+> 微信公众号：DeepNoMind
