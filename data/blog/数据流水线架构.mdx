@@ -13,111 +13,63 @@ authors: ['default']
 
 我经常对一些个人项目进行数据分析并尝试得出一些有用的结果。但我们都知道，在数据行业里没有干净的数据，总是需要对数据进行手工或者自动的处理。因此数据工程师应该首先考虑如何设计数据流水线，用于获取、存储和管理数据。
 
-**数据流水线在银行零售部门（retail banking industry）是如何运作的？**
-
-  
+# 数据流水线在银行零售部门（retail banking industry）是如何运作的？
 
 银行的零售部门总是基于数据来决定业务的运作，比如产品推荐、流失预测、贷款审批、客户细分等，通常其需要的数据不会很清晰。此外，将数据存储在一台机器中是非常危险和低效的，银行业应该转而使用大数据技术来处理。
 
-  
+当我们使用大数据技术进行数据处理的时候，并不是用一台机器来处理所有的事情，而是用 5 台机器来处理。[使用更多的机器，系统速度会更快、更方便扩展、也更容易维护](https://www.tutorialspoint.com/hadoop/hadoop_introduction.htm)。
 
-当我们使用大数据技术进行数据处理的时候，并不是用一台机器来处理所有的事情，而是用 5 台机器来处理。使用更多的机器，系统速度会更快、更方便扩展、也更容易维护\[2\]。
-
-**批处理数据流水线架构**
-
-  
+# 批处理数据流水线架构
 
 通常需要考虑 3 个系统，分别是**数据源、基础设施系统和终端系统**（请注意，这只是我自己的解释，其他人可能会有不同的说法）。
 
-  
+![批处理数据流水线架构](https://image.deepnomind.com/blog/image/77c96b0f9afc30458dc6bebf85f1fdff)
 
-![](./images/942b4979-35aa-4835-b22c-d32632a00e0d.jpg)
-
-批处理数据流水线架构
-
-**数据源（Data Sources）**
-
-  
+### 数据源（Data Sources）
 
 数据的来源各种各样，如自动柜员机(ATM)、软件、用户交互、客户服务对话，并且大部分都包含事务性数据。可以将其视为数据市场（Data Mart），它是特定于数据仓库环境的结构以及访问模式，可用于检索面向客户的数据。收集到的所有数据都将存储在一台特定的机器上，这些是未经处理的原始数据。
 
-**基础设施系统（Infrastructure Systems）**
-
-  
+### 基础设施系统（Infrastructure Systems）
 
 这里有很多我们需要了解的系统，分别用于数据提取、数据调度、数据处理、数据仓库和查询引擎。
 
-**数据提取（Ingestions）**
-
-  
+### 数据提取（Ingestions）
 
 提取模块用于负责从数据源读取数据的过程，该模块通过 API 从每个数据源读取数据。在我们提取这些数据之前，需要首先进行数据剖析（data profiling）——通过检查其特征和结构，看看是否适合我们的业务。
 
 之后，数据被分批提取。批处理流程可以在一个组里提取多组记录。在存储了很长时间的原始数据之后，通过这个过程提取数据。它并不会实时收集数据，而是按照计划执行，例如每周、双周、每月、季度和年度计划来提取数据。
 
-  
-
 Python 是在这个过程中可以使用的工具之一。对于较小的项目来说，只用 python 就足够了。更大的项目可以使用任何支持数据提取的云服务，如 GCP、Azure、AWS 等。
 
-**数据调度（Scheduler）**
+### 数据调度（Scheduler）
 
-  
+调度器用来决定什么时候应该在其他平台上接收和处理数据。在上图中，可以使用 [Apache Airflow](https://airflow.apache.org/docs/apache-airflow/stable/index.html) 为这种情况创建一个时间表。它将安排何时从数据仓库提取数据，何时处理数据。注意，Airflow 不是数据流解决方案。
 
-调度器用来决定什么时候应该在其他平台上接收和处理数据。在上图中，可以使用 Apache Airflow\[3\]为这种情况创建一个时间表。它将安排何时从数据仓库提取数据，何时处理数据。注意，Airflow 不是数据流解决方案。
-
-**数据仓库（Warehouse）**
-
-  
+### 数据仓库（Warehouse）
 
 数据仓库是我们存储从数据市场收集到的数据的地方。在 GCP 中，可以使用 BigQuery 和 Cloud Storage 进行存储。大多数情况下，BigQuery 可以处理关系型数据，而 Cloud Storage 可以处理非结构化数据，如图像、声音、视频和文本。BigQuery 和 Could Storage 之所以受到大多数公司的青睐，是因为它们提供了几乎从不间断的可用性，使我们不必担心和处理基础设施。我们需要考虑哪种 BigQuery 和 Cloud Storage 计划最适合我们的用例，从而尽可能优化总成本。不过要注意，并不是所有场景都适合云存储，尤其考虑到在银行零售业务中，某些政策可能会限制云存储的使用，比如不能将敏感数据分享给云服务商。因此，私有的现场数据库更适合这些策略。
 
-**数据处理（Processing）**
+### 数据处理（Processing）
 
-  
+当数据存储被存储到仓库中，就可以对其进行处理并转换为更合适的格式。BigQuery 可以通过 SQL 查询来处理这个问题，但是使用 Apache Spark 可能会更加灵活。我们可以用 python 编写 Apache Spark 代码，对数据进行处理和转换，并存储到 BigQuery 中。[Spark 比 pandas 更适合处理大数据](https://towardsdatascience.com/stop-using-pandas-and-start-using-spark-with-scala-f7364077c2e0)。和 pandas 相比，Spark 的缺点在于缺乏可视化的手段。
 
-当数据存储被存储到仓库中，就可以对其进行处理并转换为更合适的格式。BigQuery 可以通过 SQL 查询来处理这个问题，但是使用 Apache Spark 可能会更加灵活。我们可以用 python 编写 Apache Spark 代码，对数据进行处理和转换，并存储到 BigQuery 中。Spark 比 pandas 更适合处理大数据\[4\]。和 pandas 相比，Spark 的缺点在于缺乏可视化的手段。
-
-**查询引擎（Query Engine）**
-
-  
+### 查询引擎（Query Engine）
 
 查询引擎是编写 SQL 代码和提取请求数据的引擎，是位于数据库或服务器之上的一段软件，对数据库或服务器中的数据执行查询操作，为用户或应用程序提供答案，其获取的数据可能会被终端用户使用。查询引擎工具有 BigQuery、Presto、Apache Drill、M3 等。
 
-**终端系统（End Systems）**
-
-  
+### 终端系统（End Systems）
 
 最后，终端用户通过各种应用程序接收处理、转换和存储的数据。数据分析师和商业智能系统可能会使用可视化工具，如 Data Studio、Tableau、Qlik 和 PowerBI 来创建一些仪表板或根据数据进行分析。数据科学家和机器学习工程师可以使用提取的数据来开发一些模型、A/B 测试，并使用类笔记本应用程序（如 jupyter notebook、谷歌 colab 和 watson studio）找到一些有意义的商业洞见。
 
-**结论**
-
-  
+# 结论
 
 最后，数据流水线的意义是为业务和数据团队提供现成的数据。对于数据工程师来说，为业务选择最合适、最有效的系统和基础设施是一个挑战。
 
-**参考文献**
+# 参考文献
 
-*   \[Big Data in Retail Banking (BCG)\](https://www.bcg.com/publications/2015/big-data-advanced-analytics-financial-institutions-making-big-data-work-retail-banking)
-    
-*   \[Data Pipeline Architecture (Stitch)\](https://www.stitchdata.com/resources/data-pipeline-architecture/)
-    
-*   \[Batch and Stream Data Pipeline (Insinyur Data)\](https://www.youtube.com/watch?v=wthuW6N7TQc)
-    
-*   \[Query Engine (Alluxio)\](https://www.alluxio.io/learn/presto/query)
-    
-
-  
-
-> **Reference:**
-> 
-> \[1\] https://medium.com/@diemasaksyafachriza/data-pipeline-architecture-28687d7dce6b  
-> 
-> \[2\] https://www.tutorialspoint.com/hadoop/hadoop\_introduction.htm  
-> 
-> \[3\] https://airflow.apache.org/docs/apache-airflow/stable/index.html  
-> 
-> \[4\] https://towardsdatascience.com/stop-using-pandas-and-start-using-spark-with-scala-f7364077c2e0  
-
-  
+*   [Big Data in Retail Banking (BCG)](https://www.bcg.com/publications/2015/big-data-advanced-analytics-financial-institutions-making-big-data-work-retail-banking)
+*   [Data Pipeline Architecture (Stitch)](https://www.stitchdata.com/resources/data-pipeline-architecture/)
+*   [Batch and Stream Data Pipeline (Insinyur Data)](https://www.youtube.com/watch?v=wthuW6N7TQc)
+*   [Query Engine (Alluxio)](https://www.alluxio.io/learn/presto/query)
 
 > 你好，我是俞凡，在 Motorola 做过研发，现在在 Mavenir 做技术工作，对通信、网络、后端架构、云原生、DevOps、CICD、区块链、AI 等技术始终保持着浓厚的兴趣，平时喜欢阅读、思考，相信持续学习、终身成长，欢迎一起交流学习。微信公众号：DeepNoMind
