@@ -1,0 +1,255 @@
+---
+title: '从零打造 Instagram'
+date: '2022-01-09'
+tags: ['架构']
+draft: false
+summary: 'Instagram是全球最大的照片、视频分享社区，如果让我们自己设计一个Instagram这样的服务，应该怎么做呢？这篇文章解析了Instagram的功能和架构，从中我们可以看到设计一个内容分享服务所需要关注的部分。'
+---
+
+> _Instagram是全球最大的照片、视频分享社区，如果让我们自己设计一个Instagram这样的服务，应该怎么做呢？这篇文章解析了Instagram的功能和架构，从中我们可以看到设计一个内容分享服务所需要关注的部分。原文：[Instagram System Architecture](https://medium.com/interviewnoodle/instagram-system-architecture-fdbec22e48ee)_
+
+![](https://image.deepnomind.com/blog/image/48b77121793664138f76aaa9aed28190)
+
+Instagram是一个免费的照片和视频分享社交网络，有很多人每天在上面分享故事，记录生活中的点点滴滴。
+
+# 功能性需求
+
+1.  用户可以上传照片和视频
+2.  用户可以查看照片和视频
+3.  用户可以根据照片标题进行搜索
+4.  用户可以关注/取消关注其他用户
+5.  用户可以通过搜索栏搜索用户id
+6.  为关注的每个用户创建信息流
+7.  可以把照片存档
+8.  可以通过聊天窗口分享故事
+9.  可以拉黑/限制其他用户
+10.  可以在其他用户的帖子下面点赞和评论
+11.  用户可以发帖
+
+![](https://image.deepnomind.com/blog/image/af44667533bcf8975f5b080b45ce0a3c)
+
+# 非功能性需求
+
+1.  高可扩展性
+2.  高一致性
+3.  高可用性
+4.  高可靠性
+5.  用户数据应该是持久化的（任何上传的照片都不应该丢失）
+6.  生成信息流的最大延迟是150毫秒
+
+* * *
+
+接下来我们做一下**系统容量估算**。
+
+1.  假设注册用户 = 5亿
+2.  30%的活跃用户 = 1.5亿
+3.  注册名人人数 = 10k
+4.  读请求数 = 100 * 上传(写)请求数
+5.  高峰时刻，假设平均流量 = X，目标处理上限是6X
+
+**活跃用户：**
+
+1.  每周发帖3次，每个帖子包含1 MB的图片和文本
+2.  每个帖子至少收到10个赞和2-3条评论
+3.  关注100个用户，有50个粉丝
+4.  每天刷新2次信息流
+
+**名人：**
+
+1.  每周发帖2次，每个帖子包含大于500K的图片和文本
+2.  每个帖子至少收到50K个赞和至少1K条评论
+3.  拥有500万粉丝
+4.  每天刷新2次信息流
+
+**每秒请求数（QPS）：**
+
+1.  发帖
+
+    *   Create_post_avg = (150 Million + 10 K) * 2 / (7 * 24 * 60 * 60) = 496/s
+    *   Create_post_peak = 496/s * 6 = 3k/s
+
+2.  点赞
+
+    *   like_post_avg = (150 million * 10 + 10K * 50K) * 2 / (7 * 24 * 60 *60) = 6.6 k/s
+    *   like_post_peak = 6.6 k/s * 6 = 40 k/s
+
+3.  评论
+
+    *   comment_post_avg = (150 million * 2 + 10K * 1K) = 1k/s
+    *   Comment_post_peak = 1k/s * 6 = 6k/s
+
+4.  关注信息流
+
+    *   get_follow_feed_avg = (150 million + 10K) * 2 / (24_60_60) = 3.5k/s
+    *   get_follow_feed_peak = 3.5k/s * 6 = 21.8 k/s
+
+5.  数据量
+
+    *   64base([‘a-z’,‘A-Z’,‘0–9’,‘-’,‘\_’])编码的user_id，需要5 bits ~ 1Byte
+    *   500 Million + 10K * 5 bits ~ 1 Byte = 1G user
+
+**容量估计：**
+
+1.  每天上传的活跃用户 = 100万
+2.  每天上传的照片 = 500万张
+3.  每天每秒上传的照片 = 57张照片
+4.  平均照片大小 = 150 KB
+5.  每天存储开销 = 500万 * 150KB = 716GB
+6.  数据保存10年，所需存储容量为716 GB * 365 * 10年 = 2553 TB ≈ 2.6 PB
+7.  日活跃用户查看 = 1000万
+8.  每小时的信息流产生量为1000万，即2800 RPS(每秒请求数)。
+9.  如果用户每天搜索一次，那就是每天1000万次搜索，也就是115个RPS。
+
+* * *
+
+# 系统组件设计
+
+*   上传照片和视频 = 写操作
+*   查看照片和视频 = 读操作
+*   读写比 = 20:80
+*   Web服务器可以同时支持1000个活动连接
+*   200个连接会被写操作占用，写入(上传)会使连接长时间保持打开状态
+
+![](https://image.deepnomind.com/blog/image/b2c39fd74eb9985e05f01fceef02fa74)
+
+因此，更好的方法是用2个数据库分别处理读写操作。此外，分离照片的读写请求可以帮助我们独立的扩展和优化每个过程。下图显示了读写的过程。
+
+![](https://image.deepnomind.com/blog/image/93ca8315200a0cf8070bcbac334ef64a)
+
+## 1. 信息流生成服务（News Feed Generation services）
+
+*   为用户更新所关注的用户的最新帖子
+*   每个用户的信息流都是独一无二的，组合非常复杂
+*   为了生成新的信息流，系统必须获取这些照片的元数据(喜欢、评论、时间、位置等)，并将其传递给排名算法，以决定哪些照片应该根据元数据安排在信息流中
+*   后端需要同时查询大量的表，然后使用预定义的参数对它们进行排序，这种方法将导致更高的延迟，需要大量的时间来生成新的信息流
+*   因此，可以采用预生成的信息流。创建专门用于生成每个用户独有信息流的服务器，并将其结果存储在单独的信息流表中。当用户点击更新时，直接从数据库中读取信息流并显示给用户。
+
+## 2. 提供信息流（Serving the News Feed）
+
+*   **推模式（Push）** — 当用户上传了新的照片/视频，他/她的所有粉丝都会获得更新。如果用户关注了很多人或名人，服务器就必须非常频繁的向用户推送更新。
+*   **拉模式（Pull）** — 用户主动刷新他们的信息流(向服务器发出一个拉取请求)。在用户刷新之前，新帖子是不可见的。
+*   **混合模式（Hybrid Approach）** — 对拥有大量粉丝的名人用户应用拉模式，普通用户采用推模式。
+
+## 3. 负载均衡（Load Balancing）
+
+*   将流量分流到一组服务器中，从而提高网站或应用程序的响应和可用性
+*   使用最小带宽法
+*   该算法将选择流量最小的服务器(以每秒兆位(Mbps)计算)提供服务
+*   部署在客户端和服务器或服务器和数据库之间
+
+* * *
+
+# 数据架构
+
+![](https://image.deepnomind.com/blog/image/5cab256e926257ed04a7a6597f3b394f)
+
+## 数据库设计
+
+### 1. 用户相关数据
+
+*   **User ID**（主键）：唯一的用户ID，便于全局区分用户
+*   **Name**：用户名
+*   **Email**：用户邮件地址
+*   **Password**：用户密码，用于用户登录
+*   **Create Date**：用户注册时间
+
+### 2. 照片相关数据（AWS S3）
+
+*   **photo id**（主键）：10字节长度的唯一照片id，用于标识每一张照片
+*   **UserId**：上传照片的用户id
+*   **Path**：存放照片的对象存储路径/URL
+*   **Latitude & Longitude（纬度和经度）**：存储这些信息来找到照片的位置
+*   **Date & time（日期和时间）**：照片上传的日期和时间戳
+
+![](https://image.deepnomind.com/blog/image/c77b63eee7aec1f8f2cf80b65a9e9927)
+
+### 3. 用户关注和粉丝相关数据
+
+*   **Following**：该用户所关注的所有用户的UserId
+*   **Followers**：关注该用户的所有用户的UserId
+
+![](https://image.deepnomind.com/blog/image/d5a9c893dbc23649579e96325269574d)
+
+因此，我们需要两种不同的数据库：  
+1）关系型数据库（MySQL）  
+2）NoSQL数据库（Cassandra）
+
+## 数据模型
+
+![](https://image.deepnomind.com/blog/image/6548030e2d6daf0130f1a4c5a00c0788)
+
+![](https://image.deepnomind.com/blog/image/4712210c69b722188d5b623e81f53c1b)
+
+![](https://image.deepnomind.com/blog/image/4f95ecc53914fc634543f21c8f07cf65)
+
+![](https://image.deepnomind.com/blog/image/2075e3b43941e5058a300e99a563ed07)
+
+**典型查询**：
+
+*   获取用户X关注的所有用户——为用户X发送信息流
+*   获取所有关注用户X的用户——将用户X的帖子推送到关注者的信息流中
+*   获取所有活跃用户（为活跃用户提供缓存的关注者信息流）
+
+* * *
+
+# 接口/API
+
+1.  create_post(user_id, image, text, timestamp) -> success/failure
+2.  comment_post(user_id, post_id, comment, timestamp) -> success/failure
+3.  like_post(user_id, post_id, timestamp) -> success/failure
+4.  get_follow_feed(user_id, timestamp) -> list of newest posts from user follow list, ordered by time, limit 20
+5.  get_profile_feed(user_id, user2_id, timestamp) -> list of newest posts from user2, ordered by time, limit 20
+
+* * *
+
+# 系统架构
+
+![](https://image.deepnomind.com/blog/image/8b554dbcfb0c30fcfb359ac4cd868f21)
+
+![](https://image.deepnomind.com/blog/image/12d76043f87f41a02726a062c407456b)
+
+## 发帖
+
+![](https://image.deepnomind.com/blog/image/09634b12aa1a89c15115e8d85cd6c7f9)
+
+## 信息流
+
+![](https://image.deepnomind.com/blog/image/94f1c00d6dee1a7205dcad26b43e25a7)
+
+# 进一步细化
+
+## 发帖
+
+![](https://image.deepnomind.com/blog/image/6787daadcf1753bdfc2aa13a20991e33)
+
+## 信息流
+
+![](https://image.deepnomind.com/blog/image/517dcbe9a0c3d4e8cf3b3ff363d8d099)
+
+![](https://image.deepnomind.com/blog/image/883ed8675b2f5ae5096de1eddc7edd61)
+
+![](https://image.deepnomind.com/blog/image/02f0615477025aa20ecea6e0adeb9606)
+
+![](https://image.deepnomind.com/blog/image/08e7bc6da0e7d6d69431a3a8ae4f2b39)
+
+* * *
+
+> **延伸阅读：**
+> 
+> 1.  Instagram Engineering: https://medium.com/@InstagramEng
+>     
+> 2.  Instagram System Design: https://youtu.be/da7mdMz0g0g
+>     
+> 3.  Designing Instagram: https://www.educative.io/courses/grokking-the-system-design-interview/m2yDVZnQ8lG
+>     
+> 4.  Design Photo Sharing Platform - Instagram: https://techtakshila.com/system-design-interview/chapter-4/
+>     
+> 5.  Designing Instagram: https://www.codercrunch.com/design/634265/designing-instagram
+>     
+> 6.  Designing Instagram Architecture: https://nlogn.in/designing-instagram-architecture-system-design/
+>     
+> 7.  System Design Analysis of Instagram: https://towardsdatascience.com/system-design-analysis-of-instagram-51cd25093971
+>     
+
+> 你好，我是俞凡，在Motorola做过研发，现在在Mavenir做技术工作，对通信、网络、后端架构、云原生、DevOps、CICD、区块链、AI等技术始终保持着浓厚的兴趣，平时喜欢阅读、思考，相信持续学习、终身成长，欢迎一起交流学习。  
+> 微信公众号：DeepNoMind
