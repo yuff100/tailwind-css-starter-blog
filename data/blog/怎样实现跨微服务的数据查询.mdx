@@ -1,0 +1,183 @@
+---
+title: '怎样实现跨微服务的数据查询？'
+date: '2022-01-16'
+tags: ['架构']
+draft: false
+summary: '微服务是很好，但如果每个服务都有自己的数据库，那怎么连接不同服务的数据，从而提供统一的查询呢？这篇文章按照微服务改造的不同阶段，给出了解决方案。'
+---
+
+> _微服务是很好，但如果每个服务都有自己的数据库，那怎么连接不同服务的数据，从而提供统一的查询呢？这篇文章按照微服务改造的不同阶段，给出了解决方案。原文：[MicroServices: How do we join the data among different microservices?](https://medium.com/creditorwatch/join-data-among-microservices-1cda360c6c1c)_
+
+![如何连接不同数据库中的数据?](https://image.deepnomind.com/blog/image/fbb5b7fe0594751a57a3e1f775def447)
+
+![Monolith和Microservices数据库结构比较](https://image.deepnomind.com/blog/image/c4ac515943de72d4005e09a296edbce7)
+
+让我们从一个简单的问题开始：假设我们有一个需要进行微服务改造的单体系统，这个系统用于支持用户通过邮件购买产品。那么问题来了，在微服务化后，我怎么能够知道通过邮件购买产品A、B或C的所有用户？
+
+就像IT世界的任何事情一样，没有绝对正确或错误的解决方案，根据具体用例，一种方案可能比另一种更合适。我们始终需要平衡不同解决方案的利弊，并将其应用到特定环境和开发文化中。有时候，快速的解决方案可以帮助我们在市场中生存下来，而持久和复杂的解决方案可以帮助我们在未来迅速扩大规模！
+
+本文给出的解决方案将涵盖我们在微服务之旅中所经历的任何情况，并解释其利弊。
+
+# 使用单一数据库集群（利用Schema或表）
+
+![使用单一数据库集群的微服务数据架构](https://image.deepnomind.com/blog/image/51cc8c34c84a5a762498fb603304d975)
+
+如果不同的微服务都访问同一个数据库集群，这种解决方案会很有用，其主要思想是为不同的服务定义不同的Schema表。
+
+![每个服务负责往自己的表里写入其数据，从其他服务的Schema表中读取数据](https://image.deepnomind.com/blog/image/4dbbe5420b306c0e1dceb80d4283803d)
+
+## 经验法则
+
+**写数据**：只有拥有数据的微服务的写入请求才被允许。  
+**读数据**：任何需要数据的服务都可以读取数据。
+
+如果决定在同一个数据库中使用该模式，需要更新所有查询以启用交叉连接。以上面的例子为例，假设我们想知道所有购买产品A、B或C的用户。
+
+```sql
+# Using a different schema (Same Database Cluster)
+SELECT ut.email FROM purchase_schema.purchase_table pt INNER JOIN user_schema.user_table ut ON pt.userId = ut.id WHERE pt.product.productTag IN ('A','B','C');
+# Using the same table (Same Database Cluster)
+SELECT ut.email FROM purchase_table pt INNER JOIN user_table ut ON pt.userId = ut.id WHERE pt.product.productTag IN ('A','B','C');
+```
+
+## 好处：
+
+1.  如果要连接的Schema和表使用相同的字符集以及相同类型的外键，则可以利用索引。
+2.  从开发的角度来看，更容易实现，一切都基于SQL查询。
+3.  这是开始进行微服务化改造的第一步，能够了解系统是否设计良好，并准备好完全解耦。
+
+## 坏处：
+
+1.  单一数据库集群意味着单点故障乘以系统中微服务数量，只需要有一个微服务执行了一个消耗资源的查询就可以影响到所有其他的微服务。
+2.  需要为每个服务创建一个用户，并确保将用户配置为在特定表或特定Schema上写/只读。
+
+# 使用多个数据库：复制数据
+
+![两个微服务及其数据库，没有复制数据，因此无法连接数据以检索用户的电子邮件](https://image.deepnomind.com/blog/image/de5d790710edc4459b7f39e1b980fdd4)
+
+当我们把数据从单一数据库集群中移出时，就失去了在数据之间进行连接的能力。因此，如果我们仍然需要进行大量数据的连接并创建一个冗长的报告，怎么办才好呢？一种简单的方法是进行数据复制。即使我们能够想到一个解决方案解决大量数据连接的问题，但并不一定有时间构建和实现这样的解决方案。
+
+## 黄金法则
+
+**写数据**：只允许与数据库相关的微服务写入数据（例如，服务1只能在数据库服务1中写入）。  
+**读数据**：允许从复制数据的任何数据库中读取数据。
+
+## 好处：
+
+1.  在微服务所在的数据库中数据是可用的，因此可以执行join操作。
+2.  只能复制需要的数据。
+3.  非常快，大部分时间很容易配置。
+
+## 坏处：
+
+1.  需要设置规则，不允许微服务修改复制的数据。
+2.  数据是近实时可用的。
+3.  需要一个适当的流程来复制数据。
+4.  如果复制失败，数据将不同步。
+
+# 使用AWS DMS复制数据
+
+![](https://image.deepnomind.com/blog/image/88f64cde612363775c8cf25a2afe9f78)
+
+如果需要将数据从一个数据库集群复制到另一个数据库集群，可以使用AWS DMS(数据迁移服务)。该服务允许从两个不同的数据库复制数据，并且允许应用基本的ETL转换。
+
+如果只想传输部分数据，或者需要更改列名等信息时，ETL转换非常方便。使用AWS DMS的唯一问题是索引，编写管理索引的简单方法的时机是：
+
+*   启动和停止复制（需要在复制数据库上创建表/模式）
+*   手动应用索引
+*   再次启动正在进行的复制
+
+拥有一个完整的副本意味着仍然能够像之前那样执行join操作，实现接近实时的读取。
+
+```sql
+# The tables will be in the same schema therefore:
+SELECT ut.emails FROM purchase_table pt INNER JOIN user_table ut ON pt.userId = ut.id WHERE pt.product.productTag IN ('A','B','C');
+```
+
+# 事件(AWS kineesis或AWS Lambda)
+
+![](https://image.deepnomind.com/blog/image/17e931cd5481bb3d8a84263deb59f916)
+
+如果你正在使用事件驱动架构（EDA，Event-Driven Architecture），AWS Kinesis或者SQS和Lambda的组合绝对值得一看！然而，即使你没有使用EDA，而只用AWS，也会发现这个场景非常有趣。
+
+如果你已经部署了AWS RDS Serverless，并且希望将数据复制到另一个数据存储中，不幸的是，没法用AWS DMS，原因很简单，AWS RDS Serverless没有binlog（这会在下个版本中修复）。
+
+当我们需要多个参与者侦听数据并对更改采取行动时，这种方法是最好的。本例中，User服务将发出一个事件，表示他的域中的一些数据发生了更改。作为侦听器的Product服务将接收更改并修改数据。
+
+AWS Kinesis可以被直接调用微服务的简单REST API所取代。
+
+## 节约生命法则
+
+永远尝试在当前场景中1:1的复制数据，这将在灾难发生的时候拯救你！即使引入了一个错误，并且侦听器没有正确插入数据，也可以在当天修复这个错误。我们可以将数据库A转储到数据库B中，而不是从头开始重新处理所有事件。
+
+```sql
+# Same case as before, tables in the same schema:
+SELECT ut.emails FROM purchase_table pt INNER JOIN user_table ut ON pt.userId = ut.id WHERE pt.product.productTag IN ('A','B','C');
+```
+
+# 使用单个或多个数据库：API调用
+
+在构建微服务时，应该始终牢记API First，这将使服务之间无缝沟通。
+
+![](https://image.deepnomind.com/blog/image/af4a6f2a8681e6869106b4ea3cb67c43)
+
+在这个例子中，如果我们想获取某个用户购买的产品记录，非常简单，只需要向Product服务询问我们想要查询的用户的ID，然后使用Product服务检索我们要查找的数据。
+
+在本例中，我们希望检索购买产品A、B、C的所有用户的电子邮件，因此，可以遵循以下操作流程：
+
+```sql
+1) Product Service 
+    -> SQL to retrieve all the unique User ID that purchased product A,B,C in the past
+    -> SELECT * FROM product WHERE product_ID in ('A','B','C');
+
+2) Product Service do a REST API call to 
+    -> Service 1 asking Email for each of the User Id retrieved on step 1
+
+3) Aggregate the outputs and return the result
+```
+
+## 好处：
+
+1.  数据是完全独立和隔离的
+2.  每个微服务可以彼此通信，请求关于其他微服务领域的信息
+
+## 坏处：
+
+1.  网络延时
+2.  查询信息越多，操作就会越慢。想象一下为5000万用户请求信息。
+
+## API批量调用
+
+如果数据库中有很多用户，可以使用批量调用加快信息检索。
+
+好处和坏处和之前的解决方案差不多，根据使用的架构，可以使用一些多路复用（多线程/协程）技术加速。
+
+## 聚合服务
+
+当我们希望以接近实时的方式处理数据时，聚合服务是很好的选择。有很多种具体实现的技术，可以混合使用直接API调用、事件或数据转储，都没有关系。
+
+![](https://image.deepnomind.com/blog/image/8d8aac82d7e3dedfd4806b9ecf9beede)
+
+在本例中，将向你展示如何使用事件构建解决方案并传递不同的服务结果。
+
+![发出事件的服务和接收事件的其他服务](https://image.deepnomind.com/blog/image/bf3bf8da2e7302253b5918a018c2a78d)
+
+如果Product服务和User服务发出事件，聚合服务可以接收事件并根据需要处理数据。下面以Service 3为例，给出一个更详细的示例：
+
+![监听并处理事件，将事件存储在一个新的数据存储中](https://image.deepnomind.com/blog/image/9c77c6c9ce68c6f0873ebd65a1f08e17)
+
+监听事件，一旦收到事件，就进行需要的转换，然后将它保存到ElasticSerach中以方便检索。
+
+# 结论
+
+通信是微服务的基础，在实现本文（或资源部分中提到的书）中的任何解决方案之前，要权衡你的资源并了解你的用例。
+
+# 资源
+
+[O’Reilly: Monolith To Microservices](https://www.oreilly.com/library/view/monolith-to-microservices/9781492047834/)  
+
+![](https://image.deepnomind.com/blog/image/44afe33002224aef3d6b0f6b34099068)
+
+[O’Reilly: Building Microservices](https://www.oreilly.com/library/view/building-microservices-2nd/9781492034018/)（中文版：[《微服务设计》](https://book.douban.com/subject/26772677/)）  
+
+![](https://image.deepnomind.com/blog/image/d4debdd1c6b3bc0ce499a7c246944d64)
