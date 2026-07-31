@@ -1,0 +1,207 @@
+---
+title: 'Tinder系统架构'
+date: '2021-12-26'
+tags: ['架构']
+draft: false
+summary: 'Tinder是全球最大的约会平台之一，发明了左划/右划的用户体验，是国内陌陌、探探等大量模仿者的鼻祖。本文介绍了Tinder的基本架构，可以帮助我们理解类似应用背后的技术。'
+---
+
+> _Tinder是全球最大的约会平台之一，发明了左划/右划的用户体验，是国内陌陌、探探等大量模仿者的鼻祖。本文介绍了Tinder的基本架构，可以帮助我们理解类似应用背后的技术。原文：[Tinder System Architecture](https://medium.com/interviewnoodle/tinder-system-architecture-2012902cb415)_
+
+当朋友们都在和女朋友约会，而你还是单身狗的时候，会不会想知道基于位置的约会搜索应用程序能不能帮你解决孤独的问题？这篇文章会解释约会应用程序的设计，但阅读文章并不会自动为你带来约会，你仍然需要努力去理解妹子们。下面让我们来看看这类应用的架构吧。
+
+你知道有多少个约会软件呢？Tinder, bumble, happn，等等。作为系统架构师，我更感兴趣的是系统的构建而不是约会机会本身。当然，我也希望有更多的约会机会。
+
+* * *
+
+# 基础功能需求
+
+1.  多种登录方式，如Facebook, Instagram，谷歌，电话号码等，允许使用Facebook ID, Instagram ID，和其他方式注册。
+2.  每个用户都必须有自己的用户资料，包括年龄、距离、共同的朋友、共同的兴趣和目标描述。
+3.  地理位置检测用户的当前位置。
+4.  用户应该能够查看基于地理区域的推荐。
+5.  支持通过过滤（包括年龄、性别、距离等）进行搜索。
+6.  “划动”（Tinder独创）可以用来表示用户对目标的态度。右划表示喜欢某人，左划表示拒绝某人。
+7.  匹配：双方用户都向右滑动即可开始聊天。
+8.  聊天：与另一个用户的私人消息。
+9.  推送通知：当用户收到新消息时，通知用户喜欢或匹配或聊天。
+
+# 额外功能需求
+
+1.  超级喜欢：向上滑动某人，对方的名字会在列表里显示一个蓝色的星星，这个功能可以提醒用户收到“超级喜欢”，并且能够看到一个蓝色的横幅显示在名字底部。付费版本每天可以提供5个“超级喜欢”，但免费版本每天只会提供1个“超级喜欢”。
+2.  升级（Boost）：允许我们跳过队列直接出现在用户列表顶部，这意味着我们的配置文件将在地理区域的顶部停留半小时。
+3.  无限回退：回退上次的“划动“以纠正错误。
+4.  环球护照：在你到达目的地之前，就为即将到来的旅行找到一个匹配的目标。
+5.  无限右划和喜欢。
+6.  隐藏烦人的广告。
+7.  隐藏距离。
+8.  隐藏年龄。
+9.  控制用户偏好：对于免费版本，系统将根据ELO分数和活跃时间来显示其他用户的资料，所有这些都将由Tinder算法计算出来，以评估用户的相对吸引力。
+10.  可以选择是否希望系统将你的资料显示出来。
+11.  置顶图片：有效期24小时的推荐，并能够看到关键字。
+12.  智能照片：可以根据大多数用户对你照片的反应或喜欢选择最好的照片显示，并可以根据机器学习算法修改照片。
+13.  用户可以拉黑其他用户，但不能解除拉黑。
+14.  个人安全针对所有LGBTQ+特定用户的资料，所有被检测到的LGBTQ的用户资料不会在禁止区域内被推送。
+15.  已读回执。
+16.  喜欢你：其他用户喜欢你并想和你聊天，只有当你是付费会员时才会启用。
+17.  Noonlight时间线：从Noonlight应用程序发起紧急帮助请求，并分享约会或会议的详细信息。
+18.  照片验证：显示档案照片是否真实，如果是真的，会得到一个蓝色的图标。
+19.  安全中心：提供最新的安全更新。
+20.  超级升级（Super Boost）：跳过队列，提升100倍以上的潜在匹配率。
+21.  视频聊天：面对面的视频聊天。
+22.  极受欢迎（Hot takes）：每晚6点开始至午夜结束，通过回答6个问题，可以匹配上同样回答了这6个问题的人。在聊天的时候看不到对方的个人资料，而且聊天有时间限制。
+23.  在个人信息里添加视频。
+24.  探索部分：看看他们能认识多远的新朋友。
+25.  “你确定吗”：阻止应用中的滥用和骚扰。在人工智能的帮助下，应用识别并标记不恰当的信息。
+26.  留言：允许发送个性化留言给5位超级喜欢的人。
+27.  更喜欢（Priority like）：显示出你想约会的对象。
+28.  兴趣（Vibe）：通过回答一系列的某个类型的问题，找到志同道合的人。
+29.  身份验证：为用户提供隐私友好的身份验证方式。
+30.  Tinder U：供大学生与校园内的人联系。此外，用户还可以在不同校园的用户上划动。
+31.  工作模式：呈现一个假的项目管理工具，可以开始划动。
+
+# 非功能性需求
+
+1.  系统必须是高可靠的。
+2.  系统必须是高可用的。
+3.  高可扩展。
+4.  低延时。
+5.  非实时。
+6.  因为元数据不能保存在单一系统中，因此搜索引擎应该能够支持数据分片。
+7.  全文搜索：搜索个人的完整简介。
+8.  结构化数据：XML/JSON
+
+* * *
+
+# 规模估计
+
+1.  1亿以上的下载量
+2.  5000多万用户
+3.  30多种语言支持
+4.  200多亿的配对
+5.  每天刷18亿次（左划，右划，超级喜欢）
+6.  5000万以上会员
+
+![](https://image.deepnomind.com/blog/image/600bec7c42edb58fdc713431b51bbfdd)
+
+* * *
+
+# 系统组件设计
+
+## 1. 用户档案创建者服务，媒体文件服务器，地理分片索引和用户信息数据库
+
+![](https://image.deepnomind.com/blog/image/fa58babbee6f7c983d6aeb3d5cc4c72b)
+
+*   用户完成个人信息的创建
+*   在同步进程内将用户媒体（如照片）推送到文件服务器
+*   以键值对的形式将包含位置的用户个人信息保存到Amazon DynamoDB中
+*   将个人信息发送到基于地理位置分片的队列
+*   异步进程从队列中读取用户信息，并通过谷歌的S2库将信息传递给Geo-Sharding索引器，它可以将用户的位置映射到地理分片，并将用户添加到与该[分片关联的索引](https://medium.com/tinder-engineering/geosharded-recommendations-part-1-sharding-approach-d5d54e0ec77a)中，有助于推荐用户给其他人。
+*   通过在Amazon DynamoDB或Riak中使用键值对来存储用户信息
+
+## 2. 谷歌的S2库
+
+*   使用四叉树（Quad-Trees）将球体（sphere）分层分解成“细胞（cells）”。
+
+## 3. 获取用户推荐
+
+![](https://image.deepnomind.com/blog/image/8f4e6ad1277a590725900392febac1eb)
+
+*   当用户想要看到另一个用户时，激活推荐引擎，请求被发送到推荐引擎，并转发到地理位置分片索引器（Geo-Sharded Indexer）。
+*   索引器确定用户的位置和半径，并查询映射到相同分片的所有地理分片索引，将相同分片中的所有用户的列表提供给推荐引擎，最后推荐引擎基于算法对列表进行过滤。
+
+## 4. 推荐引擎算法
+
+*   用逻辑回归计算概率，这样系统就可以对每个用户的推荐进行排序
+
+![](https://image.deepnomind.com/blog/image/4fcb559073f69d3b846a6342746b271e)
+
+*   **主动使用：** 因为Tinder的目的是帮助人们约会，因此会检测一个人是否积极使用应用程序。
+*   **收集标签：** 当一个人使用Facebook、Instagram等网站的OAuth登录时，Tinder可以收集很多有意义的信息，比如位置、年龄、距离、性别偏好、访问地点、喜欢、不喜欢等等。
+*   **用户分组（Group Userbase）：** 用户从Tinder中随机获得一些分数，并落在某个分数桶中，这种分组有助于匹配人群。
+*   **挑剔/不良行为：** 用户右划太多，导致推荐引擎无法检测到正确的偏好，也不会向该用户显示任何推荐。
+*   **回复：** 一个人在匹配后回复的意愿程度。
+*   **分级权重（Progressive taxation）：** 如果一个人得到太多匹配，Tinder将以正常的比率将该用户的资料显示给其他用户，而如果某人没有得到太多匹配，Tinder将主动推荐给其他用户。
+*   **用户资料：** 年龄、性别、种族、地点、职业等。
+*   **用户在Tinder上的历史数据：** 左划，右划，历史地理位置，每日使用时间。
+*   **用户偏好：** 喜欢、不喜欢、偏好。
+*   **用户照片：** 面部特征、头发颜色、体型。
+
+## 5. Elastic Search集群和地理分片索引
+
+*   通过搜索索引来实现快速的搜索响应
+
+![](https://image.deepnomind.com/blog/image/6cbe6e25b819ae20aa95f85731306cf4)
+
+*   通过标准差来平衡地理分片配置与用户数量
+*   Kafka异步处理用户位置索引数据，Elastic Search获取消息并将其发送到单元映射器（cell mapper），并告诉Elastic Search信息正在使用ES API写入特定的分片。用户信息会保存在Elastic Search，并用于左/右划动。
+
+![](https://image.deepnomind.com/blog/image/12bbd27a0576fbbab9f9971295783e8b)
+
+*   平衡(Shard1, Shard2，…，ShardN) = 标准差(Shard1活跃用户数, Shard2活跃用户数，…，ShardN活跃用户数)
+*   集群由多个主节点组成，每个主节点有2个[自动伸缩组(ASG)](https://docs.aws.amazon.com/autoscaling/ec2/userguide/AutoScalingGroup.html)，一个组只包含协调节点，另一个组包含所有数据节点，每个数据节点包含一定数量的随机分布分片索引。
+*   下面两个链接很好的解释了这一部分：
+    1.  Geosharded Recommendations Part 2: Architecture: https://medium.com/tinder-engineering/geosharded-recommendations-part-2-architecture-3396a8a7efb
+    2.  Geosharded Recommendations Part 3: Consistency: https://medium.com/tinder-engineering/geosharded-recommendations-part-3-consistency-2d2cb2f0594b
+
+## 6. 划动和匹配
+
+![](https://image.deepnomind.com/blog/image/8c7e31be494aacf92a9292e1b4cf9950)
+
+*   当用户在进行左划/右划时，将会触发系统的一系列动作。划动捕捉器将处理划动操作，并将左划操作放入流数据库(如Amazon S3)进行数据分析。右划操作被放在一个单独的流中，由匹配器读取。匹配将从流中收集“喜欢”消息，并检查“喜欢”缓存中是否存在相同的对应消息。当两个用户都匹配时，一个匹配通知会通过服务器推送机制(比如websockets)发送给两个用户。如果只有一个用户喜欢其他用户，所以“喜欢”消息将首先保存在“喜欢”缓存中。
+*   在Amazon DynamoDB中将创建一个键值对用于存储用户的匹配信息(用户喜欢对方)，用于此数据存储的散列键可以是两个喜欢对方的用户的唯一标识符的复合键。
+
+![](https://image.deepnomind.com/blog/image/48a3707171d6643ea6d56145c955cc56)
+
+## 7. 用户位置变更
+
+![](https://image.deepnomind.com/blog/image/0471137a20454978b6351d750ca59d25)
+
+*   一旦用户切换了位置，我们希望确保给用户的推荐来自附近的位置，因此用户位置将被更新到新的位置，以便更新后的位置被用于获取推荐。此外，映射到用户新位置的索引也将被异步更新。
+*   用户位置50km范围内被用于为用户匹配附近的人
+
+* * *
+
+# API
+
+*   updateProfile(userToken, userProfile)
+*   uploadPicture(userToken, imagePath, imageInfo)
+*   updateSearchPreference(userToken, searchPreference)
+*   getProfiles(userToken, count)
+*   rateProfile(userToken, profileRating) (call once the user like the user profile)
+
+* * *
+
+# 系统架构概要设计
+
+![](https://image.deepnomind.com/blog/image/1399531c5e281ffb94ad1b44892c12d9)
+
+* * *
+
+# 参考文献
+
+*   Tinder System Design: https://youtu.be/nBdTBDJNOh8
+    
+*   System Design: Tinder as a microservice architecture: https://youtu.be/tndzLznxq40
+    
+*   Tinder Microservices Architecture: https://youtu.be/XFQIW2R\_Klk
+    
+*   Tinder Engineering: https://medium.com/tinder-engineering
+    
+*   Taming ElastiCache with Auto-discovery at Scale: https://medium.com/tinder-engineering/taming-elasticache-with-auto-discovery-at-scale-dc5e7c4c9ad0
+    
+*   How We Improved Our Performance Using ElasticSearch Plugins: Part 2: https://medium.com/tinder-engineering/how-we-improved-our-performance-using-elasticsearch-plugins-part-2-b051da2ee85b
+    
+*   AWS re:Invent 2017: Tinder and DynamoDB: https://youtu.be/Lq4aNihcS8A
+    
+*   How HeadSpin Helped Tinder Better Understand Performance: https://youtu.be/8zh4iUNFjKc
+    
+*   Tinder's Move to Kubernetes: https://youtu.be/o3WXPXDuCSU
+    
+*   System Design: Tinder: https://thewebdevcoach.com/system-design:-tinder
+    
+*   Building resiliency at scale at Tinder with Amazon ElastiCache: https://aws.amazon.com/blogs/database/building-resiliency-at-scale-at-tinder-with-amazon-elasticache/
+    
+
+> 你好，我是俞凡，在Motorola做过研发，现在在Mavenir做技术工作，对通信、网络、后端架构、云原生、DevOps、CICD、区块链、AI等技术始终保持着浓厚的兴趣，平时喜欢阅读、思考，相信持续学习、终身成长，欢迎一起交流学习。  
+> 微信公众号：DeepNoMind
