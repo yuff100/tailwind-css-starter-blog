@@ -1,0 +1,179 @@
+---
+title: '从零打造WhatsApp'
+date: '2022-01-01'
+tags: ['架构']
+draft: false
+summary: 'WhatsApp是全球用户最多的IM系统之一，以很小的资源消耗支撑了超大规模的消息通信，通过思考WhatsApp的架构选择，可以帮助我们了解怎样打造一个简单高效的消息系统。'
+---
+
+> _WhatsApp是全球用户最多的IM系统之一，以很小的资源消耗支撑了超大规模的消息通信，通过思考WhatsApp的架构选择，可以帮助我们了解怎样打造一个简单高效的消息系统。原文：[WhatsApp System Architecture](https://medium.com/interviewnoodle/whatsapp-system-architecture-8df0250d572f)_
+
+今天我们要设计一个类似WhatsApp的即时通讯服务。
+
+![Alexander Shatov@Unsplash](https://image.deepnomind.com/blog/image/2f2928004e332c395e731477d751c7dd)
+
+WhatsApp是全世界大部分人几乎每天都在使用的应用程序，帮助我们以友好便捷的方式联系世界各地的朋友。常用的聊天系统一般分为两种类型，一种永久存储所有的信息，典型的是Facebook Messenger，另一种只在消息无法直接送达的时候存储信息，一旦消息发送成功并收到确认，就会从系统中删除，典型的是WhatsApp。
+
+* * *
+
+# 功能性需求
+
+1.  支持一对一的聊天
+2.  支持离线时发送消息
+3.  支持向包括离线用户在内的其他用户发送消息
+4.  支持聊天群组
+5.  支持最多256名参与者的WhatsApp群组
+6.  支持视频聊天
+7.  支持群组视频聊天
+8.  支持语音消息
+9.  支持图片、视频、文件分享
+10.  支持加密消息
+11.  视频最大16MB，时长90秒到3分钟
+12.  支持已读回执
+13.  用户最后上线时间（基于不同的场景）
+14.  已发送、已送达、已阅读状态显式
+15.  分享文件大小不超过100MB
+16.  支持播放youtube、音频和视频
+17.  支持视频格式：MP4、3GP、MKV、AVI、MOV
+18.  一旦文件、视频、音频和图像超过大小限制，将显示状态通知
+19.  支持分享文件、视频、音频和图像到其他应用程序
+20.  支持在群组聊天中回复特定的消息
+21.  允许转发任何消息
+22.  允许拷贝消息
+23.  允许保存消息
+24.  允许将消息存档
+25.  允许我们私下回复消息
+26.  允许只发送和查看视频、图像一次，阅后即焚
+27.  允许删除消息
+28.  对于特定消息，支持向WhatsApp团队报告
+29.  支持通过WhatsApp拍照
+30.  支持当录音功能设置为全开后进行录音
+31.  支持访问手机联系人列表
+32.  支持共享位置（共享实时位置或共享当前位置）
+33.  支持通过Facebook Messenger、邮件、微信、Telegram等分享视频和文件
+34.  允许编辑、上传、删除用户配置文件
+35.  允许添加个人简介
+36.  允许绑定其他设备
+37.  允许更新状态
+38.  对于不同的场景，允许定制设置
+
+# 非功能性需求
+
+1.  超低时延
+2.  永远可用
+3.  没有延时
+4.  高可扩展性
+5.  一致性（在其他设备上显示的内容，将与其他设备同步）
+
+* * *
+
+# 系统架构组件
+
+![](https://image.deepnomind.com/blog/image/e8e40f8f1dfce9c8a5f8806932493159)
+
+![](https://image.deepnomind.com/blog/image/9ab00a90df90737a51c39b5b18fcc8f1)
+
+## 1. 用户数据库
+
+*   存储用户状态、头像、ID、联系方式等配置文件信息
+*   个人头像存储在[AWS S3](https://aws.amazon.com/s3/)上，每个头像都有各自的链接
+
+![](https://image.deepnomind.com/blog/image/7f5bb1cac08f7e371f5ac7af3b94b75a)
+
+## 2. 用户服务（API）
+
+*   具有多个端点，可帮助检索有关用户的详细信息，支持获取、检索用户配置信息
+
+## 3. 映射数据库
+
+*   在我们深入了解之前，需要先了解一下一般通信体系结构的概念。当两个客户端（A和B）想要互相通信和发送消息时，必须知道对方的地址（IP、MAC或任何特定的唯一标识），并通过网络（当前主要是互联网）交换消息，通常客户端会创建双向连接进行通信。这一系统会不断进化，最后可能会像下面的图片一样，其中包括了服务器、客户机、负载均衡器和数据库。
+
+![](https://image.deepnomind.com/blog/image/dcb82e767b70aad08da35e7940be778b)
+
+*   我们不使用HTTP协议，因为每个用户都需要向服务器发送请求，一旦客户端从服务器接收到响应，HTTP连接就会关闭，这意味着每个消息都需要等待服务器和客户端之间完成完整的事务。但是，每次都创建HTTP连接非常浪费时间和资源，因此我们选择使用WebSocket协议，保证连接不会被立即关闭。WebSocket处理程序WSH1将建立用户连接，是一个轻量级服务器，与所有活动用户保持连接。
+*   每台机器有大约65K个开放端口，即使我们最终使用多达5K个端口用于内部使用以及与系统中的其他服务通信，仍然有多达60K的端口可以用于与用户连接。一个WebSocket处理程序将连接到一个WebSocket管理器，该管理器维护了一个哪些WebSocket处理程序连接到哪些用户的信息存储库。管理器使用Redis作为存储，包含两种类型的信息：哪个用户连接到哪个WebSocket处理程序，某个WebSocket处理程序上连接的所有用户。当用户和WebSocket处理程序的连接中断，可以将他们连接到另一个处理程序，而相关信息也将被更新到Redis。
+*   消息服务：系统中所有消息的存储库。API通过各种过滤器获取消息，如用户id、消息id、发送状态等。新老用户每天都在聊天，因此数据不断增长，当前采用Cassandra用于消息服务。WebSocket处理程序会并行与WebSocket管理器、消息服务进行通信。
+
+![](https://image.deepnomind.com/blog/image/751561d956dbf52152476709537700a8)
+
+![](https://image.deepnomind.com/blog/image/599bd229af27da9829fc0cd3b9cddd8b)
+
+*   然后我们可以推导出一些场景。例如，发送方连接到服务器，但接收者没有上线，消息存储在数据库中，当接收方连接到服务器时，可以从数据库中获取消息。当发送方未连接到服务器时，消息将保存在设备存储中（可能是SQLite或基于平台的任何东西），当发送方联机时，消息将从本地存储中获取并发送到服务器。当两个客户端都连接到服务器时，发送方发送消息，服务器将消息转发给接收方，数据库或设备本地存储中不会保存消息。
+*   映射数据库——聊天服务器为发送方（用户A）创建一个新进程（或线程），如果接收方（用户B）在线，则同样如此。服务器找到接收方名称，从数据库中取出数据，并找出用户B的进程id（pid），以便将消息发送给用户B。如果用户B想发送消息到用户A，服务器同样通过映射数据库中用户A的名字找到pid，并将消息发送到该pid。无论何时当有用户与系统建立连接，都会创建一个新的进程，所有细节都存储在映射数据库中。
+
+![](https://image.deepnomind.com/blog/image/c4db98e36c0b7b03e52c1b4c93903cf7)
+
+在实际应用中，结构应该类似下图：
+
+![](https://image.deepnomind.com/blog/image/a579a13024c26c9a24e9d5995d1ef0a3)
+
+每个聊天服务器都包含一个队列，队列可以处理过多的消息负载，并且在向不同用户发送任何消息时不会失败。
+
+## 4. 群组服务
+
+*   对于新创建的群组，也会有一个新的groupId，这个groupId将映射到组中的所有用户。发送消息的时候，聊天服务将找到所有类型的接收方，可能是群组或单个用户，如果是群组，聊天服务将通过群组服务查询到groupId相同的所有用户，将消息发送给所有这些用户。
+
+![](https://image.deepnomind.com/blog/image/a49c7fad907bdc0872bc8ff569e08eab)
+
+*   WebSocket处理程序不能绑定群组，只能绑定活动用户。因此，当一个发送者想要向一个群组发送消息时，发送者的WebSocket处理程序将与消息服务通信，将消息存储在Cassandra中。然后消息服务与Kafka通信，将这些消息保存在Kafka中，并通过一条指令发送给群组。Kafka会和群组消息处理器交互，发送所有的群组消息，这就是群组服务的机制。群组消息处理程序将与群组服务通信，找出群组列表中的所有用户，然后通过WebSocket处理程序将消息单独传递给所有用户。
+*   群组服务维护所有与群组相关的信息，比如哪个用户属于哪个组、用户id、组id、创建组的时间、添加每个用户的时间、状态、群组图标等。这些数据也将存储在MySQL数据库中，该数据库在不同的地理位置有多个从库服务器，以减少延迟。对于访问频繁的群组，将理由缓存优化访问。
+
+## 5. 最后上线时间服务（Last Seen Service）
+
+*   最后上线时间服务使用最后上线数据库，以便存储最后上线信息。它只保留最后一次上线的时间细节，最新的信息总是替换旧的信息。当用户打开WhatsApp并向聊天服务器发送任何与用户相关的请求时，聊天服务器可以调用该服务来更新时间。
+
+![](https://image.deepnomind.com/blog/image/cc7d13e4e10f653a3384953cb624e8bd)
+
+## 6. 消息存储服务器以及临时消息存储数据库
+
+*   当接收方离线时，消息需要加密保存在服务器的数据库中。一旦接收方上线，所有的消息都可以被传递
+
+## 7. 多媒体消息
+
+聊天服务获取消息并找出消息的类型，一旦聊天服务检测到消息类型是多媒体格式后，就将其存储在AWS S3这样的对象存储服务中。这些多媒体文件的存储链接将被存储在SQL或NoSQL数据库中，并和用户详细信息相映射，可以使用HTTP协议来传递这些消息。
+
+![](https://image.deepnomind.com/blog/image/725622374ceda65bf90035c87bc2f636)
+
+*   通过WhatsApp发送的图片、文件和视频将在设备端进行压缩和加密，加密后的内容将发送到接收端，内容将在设备端和接收端进行解密。
+*   如果一个用户向另一个用户发送图片，该用户将把图片上传到服务器并获得图片id，然后图片id将被发送给另一个用户，另一个用户可以从服务器搜索和下载图片。或者另一种方案是在设备端将图片压缩，并通过负载均衡器发送到资产服务（Asset Service），将图片存储在AWS S3中。一旦图片存储到S3中，资产服务将返回图片id，用户可以通过WebSocket处理程序将图片id发送给另一个用户。
+
+* * *
+
+# WhatsApp前端
+
+*   **Android：** Java
+*   **iOS：** Swift
+*   **Windows Phone：** C#
+*   **Web app：** JavaScript/HTML/CSS
+*   **Mac桌面：** Swift/Objective-C
+*   **PC桌面：** C/C#/Java
+
+# WhatsApp后端
+
+*   **Erlang**是主要的编程语言
+*   **FreeBSD**是操作系统
+*   **Ejabberd**是XMPP应用服务器
+*   **BEAM**是Erlang虚拟机
+*   **Mnesia**是Erlang数据库
+*   **YAWS**是多媒体web服务器
+
+* * *
+
+# 系统概要设计
+
+![](https://image.deepnomind.com/blog/image/c0951eb0d1e11ee5f8db8a077979466a)
+
+# 参考资料
+
+*   The WhatsApp Architecture Facebook Bought For $19 Billion: http://highscalability.com/blog/2014/2/26/the-whatsapp-architecture-facebook-bought-for-19-billion.html
+    
+*   WhatsApp System Design: https://www.codekarle.com/system-design/Whatsapp-system-design.html
+    
+*   Behind the scenes of Chat Applications: https://sudarakayasindu.medium.com/behind-the-scenes-of-chat-applications-38634f584758
+    
+*   WhatsApp System Design: https://youtu.be/RjQjbJ2UJDg
+    
+*   Whatsapp System Design or software architecture: https://youtu.be/L7LtmfFYjc4
+
+> 你好，我是俞凡，在Motorola做过研发，现在在Mavenir做技术工作，对通信、网络、后端架构、云原生、DevOps、CICD、区块链、AI等技术始终保持着浓厚的兴趣，平时喜欢阅读、思考，相信持续学习、终身成长，欢迎一起交流学习。  
+> 微信公众号：DeepNoMind
