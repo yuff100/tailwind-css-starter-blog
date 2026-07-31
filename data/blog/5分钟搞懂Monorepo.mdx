@@ -1,0 +1,205 @@
+---
+title: '5分钟搞懂Monorepo'
+date: '2021-12-12'
+tags: ['Git','最佳实践']
+draft: false
+summary: '由于谷歌在Monorepo上的实践，Monorepo受到了越来越多的关注。Monorepo意味着把所有项目的所有代码统一维护在一个单一的代码版本库中，和多代码库方案相比，两者各有优劣，需要根据公司文化和产品特性进行取舍。'
+---
+
+> _由于谷歌在Monorepo上的实践，Monorepo受到了越来越多的关注。Monorepo意味着把所有项目的所有代码统一维护在一个单一的代码版本库中，和多代码库方案相比，两者各有优劣，需要根据公司文化和产品特性进行取舍。原文：[What is monorepo? (and should you use it?)](https://semaphoreci.com/blog/what-is-monorepo)_
+
+_Monorepos（单一代码库）有助于加快开发工作流程，在本文中，我们将介绍monorepo的相关细节，从而帮助大家确认这一代码组织模型是否适合各自的团队和公司。_
+
+# 什么是monorepo？
+
+_Monorepo_ 的意思是在版本控制系统的单个代码库里包含了许多项目的代码。这些项目虽然有可能是相关的，但通常在逻辑上是独立的，并由不同的团队维护。
+
+有些公司将所有代码存储在一个代码库中，由所有人共享，因此Monorepos可以非常大。例如，理论上谷歌拥有有史以来最大的代码库，每天有成百上千次提交，整个代码库超过80 TB。其他已知运营大型单一代码库的公司还有微软、Facebook和Twitter。
+
+Monorepos有时被称为 _单体代码库（monolithic repositories）_ ，但不应该与 _单体架构（monolithic architecture）_ 相混淆，单体架构是一种用于编写自包含应用程序的软件开发实践。这方面的一个例子就是Ruby on Rails，它可以处理Web、API和后端工作。
+
+# 单一代码库（monorepos） vs 多代码库（multirepos）
+
+与单一代码库相反的是 _多代码库（multirepos）_，每个项目都储存在一个完全独立的、版本控制的代码库中。多代码库是很自然的选择——我们大多数人在开始一个新项目时都愿意开一个新的代码库，毕竟，谁都喜欢从0开始.
+
+从多代码库到单一代码库的变化就意味着将所有项目移到一个代码库中。
+
+![](https://image.deepnomind.com/blog/image/832b3a248c96b43f9047508e1014b6de)
+
+当然，这只是开始。当我们开始重构和整合时，困难的工作就来了。
+
+```bash
+$ mkdir monorepo
+$ git init
+$ mv ~/src/app-android10 ~/src/app-android11 ~/src/app-ios .
+$ git add -A
+$ git commit -m "My first monorepo"
+
+```
+
+多代码库不是 _微服务（microservices）_ 的同义词，两者之间并没有耦合关系。事实上，我们稍后将讨论将单一代码库和微服务结合起来的例子。只要仔细设置用于部署的[CI/CD流水线](https://semaphoreci.com/blog/cicd-pipeline)，单一代码库就可以托管任意数量的微服务。
+
+# 单一代码库的好处
+
+乍一看，单一代码库和多代码库之间的选择似乎不是什么大问题，但这是一个会深刻影响到公司开发流程的决定。至于单一代码库的好处，可以列举如下：
+
+*   **可见性（Visibility）**：每个人都可以看到其他人的代码，这样可以带来更好的协作和跨团队贡献——不同团队的开发人员都可以修复代码中的bug，而你甚至至都不知道这个bug的存在。
+*   **更简单的依赖关系管理（Simpler dependency management）**：共享依赖关系很简单，因为所有模块都托管在同一个存储库中，因此都不需要包管理器。
+*   **唯一依赖源（Single source of truth）**：每个依赖只有一个版本，意味着没有版本冲突，没有依赖地狱。
+*   **一致性（Consistency）**：把所有代码库放在一个地方时，执行代码质量标准和统一的风格会更容易。
+*   **共享时间线（Shared timeline）**：API或共享库的变更会立即被暴露出来，迫使不同团队提前沟通合作，每个人都得努力跟上变化。
+*   **原子提交（Atomic commits）**：原子提交使大规模重构更容易，开发人员可以在一次提交中更新多个包或项目。
+*   **隐式CI（Implicit CI）**：因为所有代码已经统一维护在一个地方，因此可以保证[持续集成](https://semaphoreci.com/continuous-integration)。
+*   **统一的CI/CD（Unified CI/CD）**：可以为代码库中的每个项目使用相同的[CI/CD](https://semaphoreci.com/cicd)部署流程。
+*   **统一的构建流程（Unified build process）**：代码库中的每个应用程序可以共享一致的[构建流程](https://semaphoreci.com/blog/build-stage)。
+
+# 单一代码库的缺陷
+
+随着单一代码库的发展，我们在版本控制工具、构建系统和持续集成流水线方面达到了设计极限。这些问题可能会让一家公司走上多代码库的道路：
+
+*   **性能差（Bad performance）**：单一代码库难以扩大规模，像git blame这样的命令可能会不合理的花费很长时间执行，IDE也开始变得缓慢，生产力受到影响，对每个提交测试整个repo变得不可行。
+*   **破坏主线（Broken main/master）**：主线损坏会影响到在单一代码库中工作的每个人，这既可以被看作是灾难，也可以看作是保证测试既可以保持简洁又可以跟上开发的好机会。
+*   **学习曲线（Learning curve）**：如果代码库包含了许多紧密耦合的项目，那么新成员的学习曲线会更陡峭。
+*   **大量的数据（Large volumes of data）**：单一代码库每天都要处理大量的数据和提交。
+*   **所有权（Ownership）**：维护文件的所有权更有挑战性，因为像Git或Mercurial这样的系统没有内置的目录权限。
+*   **Code reviews**：通知可能会变得非常嘈杂。例如，GitHub有有限的通知设置，不适合大量的pull request和code review。
+
+你可能已经注意到，这些问题中的大多数都和技术有关。在下面的章节中，我们将了解坚持使用单一代码库的公司是如何通过投资工具、添加集成以及编写定制解决方案来解决大部分问题的。
+
+# 这不仅仅是技术问题
+
+选择代码库策略不仅是一个技术问题，也是关于人们如何交流的问题。正如康威定律所言，沟通对于创造伟大的产品至关重要：
+
+> **任何组织所设计的系统（此处的定义比信息系统宽泛得多）架构，都不可避免的反映为该组织沟通结构的副本。——康威定律**
+
+虽然多代码仓库允许每个团队独立管理他们的项目，但同时也阻碍了协作。它们就像眼罩一样，让开发人员只关注自己所拥有的部分，而忽略了整体。
+
+另一方面，单一代码库就像一个枢纽、一个广场，每个开发人员、工程师、测试人员和业务分析师都可以在这里会面和交谈。单一代码库鼓励对话，帮助我们消除“竖井”。
+
+# Monorepo文化
+
+Monorepos已经存在很长时间了。三十年来，FreeBSD一直使用CVS和后来的[subversion monorepos](https://docs.freebsd.org/en_US.ISO8859-1/articles/committers-guide/article.html)进行开发和包分发。
+
+许多开源项目已经成功使用了单一代码库。例如：
+
+*   [Laravel](https://laravel.com/)：一个用于Web开发的PHP框架。
+*   [Symfony](https://symfony.com/)：一个用PHP编写的MVC框架。有趣的是，他们已经为每个Symfony工具和库创建了只读存储库，这种方法被称为 _分库（split-repo）_。
+*   [NixOS](https://github.com/NixOS/nixpkgs/)：一个用单一代码库发布包的Linux发行版
+*   [Babel](https://github.com/babel/babel/blob/master/doc/design/monorepo.md)：一个用户Web开发的流行的JavaScript编译器，其单一代码库包含了完整的项目及其所有插件。
+*   此外，[React](https://github.com/facebook/react/tree/master/packages)、[Ember](https://github.com/emberjs/ember.js/tree/master/packages)和[Meteor](https://github.com/meteor/meteor/tree/devel/packages)等前端框架都使用单一代码库。
+
+然而，真正的问题是商业软件是否能从单一代码库中获益。考虑到这些优点和缺点，让我们来看一些已经尝试过的公司的经验。
+
+## Segment，告别多代码库
+
+Alex Noonan讲述了一个关于告别多代码库的[故事](https://segment.com/blog/goodbye-microservices/)。她所在的公司Segment.com提供活动收集和转发服务，每个客户都需要使用一种特殊格式的数据。因此，工程团队最初决定混合使用微服务和多代码库。
+
+这一策略效果很好——随着客户基数的增长，他们扩大了规模，没有出现问题。但是，当转发目的地的数量超过100个时，事情开始变得糟糕起来。维护、测试和部署超过140个代码库（每个代码库都有数百个日益分化的依赖关系）的管理负担太高了。
+
+> **“最终，团队发现他们无法取得进展，三个全职工程师花费了大部分时间来维持系统的运行。”**
+
+对于Segment来说，补救办法就是合并，将所有的服务和依赖迁移到一个单一代码库中。他们必须协调共享库并且测试所有内容，虽然花了很大的代价，但迁移非常成功，最终的结果是降低了复杂性，增加了可维护性。
+
+> **“更快的速度就是证据。[…] 我们在过去6个月里对库的改进比2016年全年都要多。”**
+
+多年后，当一个小组询问她在[微服务方面的经验](https://www.infoq.com/articles/microservices-from-trenches-lessons-challenges/)时，Alex解释了她迁移到单一代码库的原因：
+
+> **“这并没有像我们想象的那样成为我们的优势。我们改变的主要动机是因为失败的测试会影响到不同的东西。[...] 把它们分成单独的代码库只会让情况变得更糟，因为有可能你会过了6个月才集成某个库的更新，结果测试完全被破坏了，而你又不想花时间去修复。我见过的成功分解为独立代码库而不是服务的案例之一是，当我们有一块代码在多个服务之间共享时，我们想让它成为一个共享库。除此之外，我们发现，即使转向微服务，我们仍然更喜欢单一代码库。”**
+
+## Airbnb和monorail
+
+Airbnb的基础设施工程师延斯·范德海格（Jens Vanderhaeghe）也讲述了[微服务和单一代码库是如何帮助他们向全球扩张](https://www.youtube.com/watch?v=sakGeE4xVZs)。
+
+Airbnb最初的版本被称为“monorail”，是一个独立的Ruby on Rails应用程序。当公司开始指数级增长时，代码库也随之增长。当时，Airbnb实施了一项名为“_民主发布（democratic releases）_”的新发布政策，意味着任何开发者都可以在任何时候发布产品。
+
+随着Airbnb的扩张，民主程序的限制也受到了考验，合并更改变得越来越困难。Jens的团队实施了一些缓解措施，比如合并队列和增强监控。这在一段时间内有帮助，但从长远来看还是不够。
+
+Airbnb的工程师们为维持monorail系统进行了英勇的斗争，但最终，经过数周的辩论，他们决定将该应用分割为多个微服务。因此，他们创建了两个单一代码库：一个用于前端，一个用于后端。两者都包含数百个服务、文档、用于部署的Terraform和Kubernetes资源以及所有维护工具。
+
+当被问及单一代码库的优势时，Jens说道：
+
+> **“我们不想处理所有这些微服务之间的版本依赖关系。[使用单一代码库]你可以通过一个提交在两个微服务之间做出改变。[...] 我们可以围绕一个代码库构建所有工具。最大的卖点是你可以同时在多个微服务上做出改变。我们通过脚本检测单一代码库中的哪些应用程序会受到影响，然后部署这些应用程序。我们获得的主要好处是源代码控制。”**
+
+## Uber，来来回回
+
+来自优步（Uber）的艾米•卢西多（Aimee Lucido）描述了[从单一代码库到多代码库再切换回来的过程](https://www.youtube.com/watch?v=lV8-1S28ycM)。
+
+当时，她正在Android客户团队工作。他们从一开始就使用单一代码库，但是经过5年的快速发展，单一代码库的问题开始显现出来。
+
+> **“我们开始遭遇可怕的IDE死锁，我们甚至不能在Android Studio中翻看代码，否则IDE就会没有任何反应。”**
+
+问题并不只是发生在IDE，也影响到Git，构建过程一拖再拖。更糟糕的是，他们经常会破坏主线，这让他们无法构建任何东西。
+
+> **“公司规模越大，就越频繁地遇到主线被破坏的情况。”**
+
+当Uber达到中等规模时，团队决定切换到多代码库，这解决了很多问题。Uber的工程师们喜欢这样的状态：他们可以拥有一部分代码，并且只对这部分代码负责。
+
+> **“如果只构建地图应用，那就可以很快构建出来，这太棒了。”**
+
+但故事并没有到此结束。又过了一段时间，多代码库策略开始显示出它的弱点。这一次不仅仅是关于技术问题，而是关于人们如何合作。团队被分解成多个竖井，管理数千个代码库的开销消耗了大量宝贵的时间。
+
+每个团队都有自己的编码风格、框架和测试实践。管理依赖关系也变得更加困难，依赖关系的恶魔抬起了它丑陋的头，这使得最终将所有内容整合到一个产品中变得非常困难。
+
+就在这个时候，Uber的工程师们再次合作，决定再给单一代码库一次机会。有了更多的资源并且提前知道他们将面临的问题，他们选择投资于工具：他们修改了IDE，实现了合并队列，并使用增量构建来加快部署。
+
+> **“当团队发展到大公司的规模时，可以投入资源，让大公司感觉像一个小公司，把缺点变成优点。”**
+
+## Pinterest，全力投资单一代码库
+
+让我们以一家正在经历三年转型的公司作为总结：Pinterest。他们的努力包括了两个方面。首先，将1300多个代码库切换到四个单一代码库中。其次，将数百个依赖项整合到一个完整的Web应用程序中。
+
+他们为什么要这么做？[Eden JnBaptiste](https://www.youtube.com/watch?v=r5KHQnS6uP8)解释说，多代码库使得他们很难重用代码。情况是一样的：代码太过分散，每个团队都有自己的仓库，有自己的风格和结构。构建过程质量标准是高度可变的，构建和部署变得非常困难。
+
+Pinterest发现，[基于主干开发](https://trunkbaseddevelopment.com/)配合单一代码库有助于取得进展。基于主干的开发的基础是只使用临时分支，尽可能频繁的合并到主分支上，从而减少合并冲突的机会。
+
+> **“将所有代码放在一个仓库中有助于我们减少（构建系统中的）反馈循环。”**
+
+对于Pinterest，单一代码库提供了一致的开发工作流。发布实践的自动化、简化和标准化允许他们减少文档，让开发人员专注于编写代码。
+
+# 投资于工具
+
+如果我们必须从所有这些故事中吸取一个教训，那就是正确的工具是有效的单一代码库的关键——需要重写思考构建和测试。我们可以使用智能构建系统，而不是在每次更新时重新构建完整的仓库，它需要了解项目结构，并且只对自上次提交以来变更的部分进行操作。
+
+![](https://image.deepnomind.com/blog/image/1480f057c634a96574b780b946923298)
+
+我们大多数人都没有谷歌或Facebook的资源。那我们能做什么呢？幸运的是，许多大公司的构建系统都是开源的：
+
+*   [Bazel](https://bazel.build/)：由谷歌发布，部分基于他们自己的构建系统（Blaze）。Bazel支持多种语言，并支持大规模构建和测试。
+*   [Buck](https://buck.build/): Facebook开源的快速构建系统，支持在多种语言和平台上进行不同的构建。
+*   [Pands](http://www.pantsbuild.org/)：Pands构建系统是与Twitter、Foursquare和Square合作创建的。目前只支持Python，后续还将支持更多的语言。
+*   [RushJS](https://rushjs.io/)：微软用于JavaScript的可扩展的单一代码库管理器，能够从一个代码库构建和部署多个包。
+
+Monorepos正在获得越来越多的关注，尤其是在JavaScript方面，如下项目所示：
+
+*   [Lerna](https://github.com/lerna/lerna)：JavaScript的单一代码库管理器，可以与React、Angular或Babel等流行框架集成。
+*   [Yarn workspace](https://classic.yarnpkg.com/en/docs/workspaces/)：用一个命令在多个地方安装和更新Node.js的依赖项。
+*   [ultra-runner](https://github.com/folke/ultra-runner)：JavaScript单一代码库管理脚本，支持Yarn、pnpm和Lerna插件，支持并行构建。
+*   [Monorepo builder](https://github.com/Symplify/MonorepoBuilder)：通过单一代码库安装和更新PHP包。
+
+# 扩展代码库
+
+源代码控制是单一代码库的另一个痛点，这些工具可以帮助您扩展存储库：
+
+*   [Virtual Filesystem for Git（VFS）](https://vfsforgit.org/)：为Git添加流支持。VFS可以根据需要从Git仓库下载对象。这个项目最初是为了管理Windows代码库（最大的Git仓库）而创建的，只能在Windows上使用，但已经宣布要支持MacOS。
+*   [Large File Storage](https://git-lfs.github.com/)：Git的开源扩展，为大文件提供了更好的支持。安装了这个扩展，就可以跟踪任何类型的文件，并将它们无缝的上传到云存储中，从而释放代码库的空间，使push和pull的速度更快。
+*   [Mercurial](https://www.mercurial-scm.org/)：Git的替代方案，Mercurial是一个分布式版本控制工具，专注于速度。Facebook使用Mercurial，多年来已经发布了许多提高速度的[补丁](https://engineering.fb.com/2014/01/07/core-data/scaling-mercurial-at-facebook/)。
+*   [Git CODEOWNERS](https://help.github.com/articles/about-codeowners/)：允许定义哪个团队拥有代码库中的子目录，当有人提交pull request或push代码到受保护的分支时，代码所有者会自动被要求进行审查。GitHub和GitLab都支持这一特性。
+
+# Monorepo管理最佳实践
+
+基于这些单一代码库的故事，我们可以定义一套最佳实践：
+
+*   定义一个便于探索的统一的目录组织。
+*   维护分支整洁，保持较小的分支，考虑采用基于主干的开发。
+*   为每个项目使用固定的依赖项，一次升级所有依赖项，迫使每个项目都跟上依赖项。只为真正的例外情况保留例外。
+*   如果正在使用Git，学习如何使用[shallow clone](https://github.blog/2020-12-21-get-up-to-speed-with-partial-clone-and-shallow-clone/)和[filter-branch](https://git-scm.com/docs/git-filter-branch)来处理大容量代码库。
+*   货比三家，寻找像Bazel或Buck这样的智能构建系统，以加速构建和测试。
+*   如果需要限制对某些项目的访问，请使用CODEOWERS。
+*   使用[Semaphore](https://semaphoreci.com/)等CI/CD云平台来大规模测试和部署应用程序。
+
+# 应该使用单一代码库吗?
+
+看情况而定，没有适合所有用例的答案，有些公司可能会暂时选择单一代码库，然后决定需要转向多代码库，或者相反，而其他人可能会选择混合代码库。如果不确定，考虑到从单一代码库到多代码库通常比反过来要更容易。但千万不要忽视这一点，最终，这与技术无关，而是与工作文化和沟通有关。所以，根据你想要的工作方式来做决定。
+
+> 你好，我是俞凡，在Motorola做过研发，现在在Mavenir做技术工作，对通信、网络、后端架构、云原生、DevOps、CICD、区块链、AI等技术始终保持着浓厚的兴趣，平时喜欢阅读、思考，相信持续学习、终身成长，欢迎一起交流学习。  
+> 微信公众号：DeepNoMind
