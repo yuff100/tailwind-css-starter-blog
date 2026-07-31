@@ -1,0 +1,293 @@
+---
+title: 'Uber 系统架构设计'
+date: '2022-01-08'
+tags: ['架构']
+draft: false
+summary: '共享租车鼻祖Uber的后端架构也经历了从单体到微服务的演化过程，这篇文章介绍了Uber后端架构的功能、设计，对于理解O2O系统的架构实现提供了很好的参考。'
+---
+
+> _共享租车鼻祖Uber的后端架构也经历了从单体到微服务的演化过程，这篇文章介绍了Uber后端架构的功能、设计，对于理解O2O系统的架构实现提供了很好的参考。原文：[Uber System Architecture](https://medium.com/interviewnoodle/uber-system-architecture-40201134aaea)_
+
+![Fikri Rasyid@Unsplash](https://image.deepnomind.com/blog/image/413249d22d8dc4525bbc2e828ffafa19)
+
+Uber一开始是单体架构，后来逐渐演化为面向服务的架构。Uber最早只为旧金山提供服务，他们称之为UberBlack。后来随着核心领域模型的增长以及引入了越来越多的新特性，组件的耦合非常严重，持续集成变成了沉重的负担，每次部署都意味着需要一次性部署所有的东西。在单一代码库中添加新功能、修复bug、解决技术债务变得非常困难，这也是为什么Uber后来采用面向服务的架构的原因，这也促使Uber工程团队重构了新的Uber应用。
+
+> **延伸阅读：**
+> 
+> 1.  Is Microservice Architecture the best choice for Machine Learning Deployment: https://towardsdatascience.com/is-microservice-architecture-the-best-choice-for-machine-learning-deployment-39ae325a2baf
+>     
+> 2.  Engineering the Architecture Behind Uber's New Rider App: https://eng.uber.com/new-rider-app-architecture/
+>     
+
+![](https://image.deepnomind.com/blog/image/b6450cb72b6080f741cf8fa89fb49750)
+
+新应用程序增加了UberPool、预约出行和促销车辆的视图。
+
+**目标**
+
+1.  实现优步核心出行体验99.99%的可靠性（每年最多1小时的停机时间，每周最多1分钟，换句话说，每10000次运营一次只能出现1次故障）
+2.  代码库拆分成两部分：核心代码和可选代码。核心代码被用于乘客注册、呼叫、完成或取消出行要求时，任何对核心代码的修改都必须经过严格的审查。可选代码很少被审查，并且可以在任何时候被动态关闭。这鼓励了代码级别上的相互独立，允许我们尝试新特性并随时停止它们。
+3.  核心架构：类名、业务逻辑单元之间的继承关系、主业务逻辑、插件点（名称、依赖关系、结构等）、响应式编程链（响应式编程之间的关系）、统一平台组件（统一的平台级模块）
+
+**解决方案**
+
+![](https://image.deepnomind.com/blog/image/a07c0358324cdf4f757869bf9ddf82fd)
+
+1.  应用iOS架构（从MVC到VIPER，并创建Riblets）
+
+> **延伸阅读：**
+> 
+> 1.  iOS Architecture Patterns: https://medium.com/ios-os-x-development/ios-architecture-patterns-ecba4c38de52
+>     
+> 2.  Ensuring Product Success With Transparency: https://mutualmobile.com/approach
+>     
+
+* * *
+
+# 功能性需求
+
+![](https://image.deepnomind.com/blog/image/7eefaa73fd596fdab2e8e4c88f445fb8)
+
+![](https://image.deepnomind.com/blog/image/cda4cfda2ce0e7ea3b7e9d5c933ad61f)
+
+![](https://image.deepnomind.com/blog/image/c29f9fc4853cc9be9031e1868a92c754)
+
+1.  乘客可以查看附近的司机
+2.  乘客可以发起乘车请求
+3.  乘客可以查看司机的预计到达时间和预计价格
+4.  司机如果接受请求，直到整个行程结束，乘客都可以查看司机的位置并与之沟通
+5.  乘客可以预定出租车
+6.  可以自动匹配乘客和司机
+7.  可以看到附近的出租车
+8.  位置跟踪
+9.  事后操作：评价、发送电子邮件、更新数据库、付款
+10.  价格和激励：在预测算法的帮助下，当需求增加而供给减少时，价格会上升。据Uber称，激励有助于满足供给需求，通过提高价格，当需求增加时，路上会有更多的出租车。
+
+# 非功能性需求
+
+1.  全球化
+2.  低时延
+3.  高可用
+4.  高一致性
+5.  可扩展性
+6.  数据中心故障：用于处理意外的级联故障或上游网络提供商的失效。Uber维护了一个备份数据中心，交换机已经准备好将所有数据都路由到备份数据中心，唯一的问题是正在进行的行程的数据可能没有备份。
+
+> **延伸阅读：**  
+> How to Make an App Like Uber: https://mlsdev.com/blog/how-to-make-an-app-like-uber
+
+![](https://image.deepnomind.com/blog/image/ee4690b42f75f4eda746deddb8123c66)
+
+![](https://image.deepnomind.com/blog/image/319af4dfdbc68f47c26038cf9e987aa6)
+
+* * *
+
+# DISCO — Uber系统的基础
+
+1.  供给服务（在司机端操作）
+2.  请求服务（在乘客端操作）
+
+调度优化（或称DISCO，Dispatch optimization）是Uber系统的一部分，用于基于位置数据匹配需求和供给。在匹配司机和乘客时，DISCO保持最小化总服务时间和驾驶时间。与简单地使用纬度和经度来定位乘客和司机不同，DISCO使用了更精确的谷歌S2库，它将地图划分为多个小单元。例如根据需求，可以在地图上设置1平方公里的单元格，每个单元分配唯一的ID，因此在分布式系统中可以通过ID更方便的存储和访问单元数据，并且可以使用一致性哈希来存储单元数据。
+
+调度系统基于NodeJS实现，提供基于事件的异步机制，允许在任何时候通过WebSocket和应用程序进行交互。Uber使用一致性哈希环来扩展其DISCO服务器，从而在服务器之间有效分配负载，并自动检测集群中是否有新节点被添加或是否有节点从集群中移除，从而通过SWIM/Gossip协议重新分配工作负载。服务器之间通过RPC进行通信。
+
+**请求服务**
+
+*   乘客请求搭乘出租车
+*   可以获得乘客发起请求的位置
+*   微服务通过WebSocket获取乘客发起的请求
+*   跟踪乘客的GPS位置
+*   接受乘客的特定需求
+*   将请求以及其他需求移交给调度系统，以将其连接到供给服务
+
+**供给服务**
+
+*   为司机端提供服务
+*   使用经纬度数据（地理位置）跟踪出租车
+*   所有在线的出租车每5秒过Web应用程序防火墙向负载均衡器发送一次它们的位置
+*   负载均衡器将出租车的GPS位置定向到Kafka REST API。
+*   出租车的位置信息被更新到Kafka，同时副本被发送到数据库和DISCO，这样每个服务都可以使用最新的出租车位置信息
+
+* * *
+
+# DISCO — 调度优化
+
+1.  减少司机驾驶时间
+2.  减少乘客等待时间
+3.  最小化总服务时间
+
+**出行数据**
+
+*   出租车位置数据
+*   出行完成后的计费数据，包括出行开始和结束的时间戳，这样Uber可以计算车费并向乘客收费
+
+* * *
+
+# 数据库架构
+
+*   支持应用频繁读写
+*   因为出租车每5秒更新一次位置信息，因此会有频繁的写操作。同时有很多出行请求，意味着读操作也会很频繁。
+*   从关系型数据库PostgreSQL到建立在MySQL之上的无模式NoSQL数据库
+
+* * *
+
+# 系统架构
+
+![](https://image.deepnomind.com/blog/image/6300fdea2a106d496bbc19412b1c16c6)
+
+![](https://image.deepnomind.com/blog/image/6cb026d8571c31e0f543339212fcca60)
+
+> **延伸阅读：**
+> 
+> 1.  System Design: Uber Lyft ride sharing services: https://youtu.be/J3DY3Te3A\_A
+>     
+> 2.  Uber System Design: https://youtu.be/NOHQ15lwHKY
+>     
+> 3.  Grokking the Uber System Design Interview: https://youtu.be/AAMLzNaDkjk
+>     
+> 4.  Uber System Design: https://youtu.be/Tp8kpMe-ZKw
+>     
+> 5.  UBER System Design: https://youtu.be/umWABit-wbk
+>     
+
+![](https://image.deepnomind.com/blog/image/178d8bd0d7de42160ffa799e83b5eb9a)
+
+![](https://image.deepnomind.com/blog/image/b2006fb4b963b098bb03e13b218e9b9a)
+
+* * *
+
+# 系统组件
+
+![](https://image.deepnomind.com/blog/image/ebd1830fc8213f7a7cf3bf2b19da4d1e)
+
+## 地图 — 把出租车位置发送给乘客
+
+*   乘客发出出行请求，应用程序会在地图上显示附近所有司机的位置。当客户打开地图时，会向服务器发送查找附件所有司机的查询。
+*   Kafka提供的实时位置数据将用于计算司机到达时间，这样乘客就可以知道车辆什么时候会来，同时还会告诉乘客到达目的地的预计时间。
+*   Dijkstra算法可以用来在有公路网的地图上找到最短路径。由于最短路径（按距离计算）并不总是最快路径（繁忙的交通可能会影响到达时间），更复杂的人工智能算法也可以用来估算最短行驶时间。
+
+## Web应用防火墙
+
+*   出于安全原因会设置防火墙，用来拦截来自可疑来源或服务不支持地区的请求。
+
+## 负载均衡
+
+*   Uber使用三层负载均衡器，分别用于处理网络的三层、四层和七层协议。L3是基于IP的负载均衡，L4用于基于DNS的负载均衡，L7处理应用程序负载均衡。
+
+## Kafka
+
+*   Kafka为Uber提供了日志层。它可以立即将更新记录到某个存储位置，从而可以被不同微服务使用。Kafka提取所有这些实时更新并保证没有信息丢失。在实现上，通过一个Kafka服务器集群来达成这个目的。
+
+## Web Sockets
+
+*   在这种类型的应用程序中，客户端（包括乘客应用和司机应用）和服务器之间的通信可以通过Web Sockets来完成，从而可以保持客户端与服务器之间的长连接。
+
+## Hadoop
+
+*   Uber通过分析数据来改善服务。Kafka会定期在Hadoop中存储和归档数据，这些数据在分析应用程序的不同使用趋势时很有帮助。例如，可以知道何时何地有更多的Uber司机或更多的出行请求。
+
+## 基于MySQL的支付数据库
+
+*   支付服务基于Kafka，在出行服务完成后被触发。一旦出行完成，基于距离、时间等信息，计算出需要支付金额，并将所有这些信息插入支付MySQL数据库中。如果需要的话，支付服务也将与支付网关对接。此外还提供开放API，以供查询客户或司机帐户所有与支付相关的信息。
+*   支付选项，方便用户添加新的支付配置文件
+*   对交易进行支付预授权，保证有一定数量的金额可供支付
+*   取消付款，退款
+*   获取客户账户并收费，将金额从用户账户转移到Uber
+*   删除支付选项和配置文件
+*   小费
+*   预约服务
+*   促销
+*   按期清偿未付款项
+*   在服务期间切换支付方式
+*   默认支付方式，支持回退或选择
+*   重复支付
+*   不正确的货币转换
+*   错误的付款
+*   缺失的付款
+*   空授权
+
+> **延伸阅读：**  
+> Uber's Payment Platform: https://underhood.blog/uber-payments-platform
+
+![](https://image.deepnomind.com/blog/image/8a59d0da8e6a383ea3ce6de67e684cac)
+
+![](https://image.deepnomind.com/blog/image/4f36e891b01ff6450b0e991a20be1b77)
+
+![](https://image.deepnomind.com/blog/image/303ae9c5a529071bc81e95431eb17ef0)
+
+![](https://image.deepnomind.com/blog/image/ae6ce40704b8943d7375e38ea24bbb4e)
+
+![](https://image.deepnomind.com/blog/image/007eb826a5e2604bc8c964c08119d29b)
+
+![](https://image.deepnomind.com/blog/image/e724564ba1a9238719b496a64618068d)
+
+![](https://image.deepnomind.com/blog/image/728b3dcc89a6ce4fee60f6644e211a22)
+
+![](https://image.deepnomind.com/blog/image/9710bd65de057b4eae41eefb20fe886a)
+
+![](https://image.deepnomind.com/blog/image/892ca4d0bbd08e4b9223fe373ac99345)
+
+![](https://image.deepnomind.com/blog/image/e14da530638c3383fc38d8f8b63e117a)
+
+## Spark流处理集群
+
+*   跟踪基本事件，例如找不到司机，识别缺少司机的区域，以及其他基本分析。Spark集群还会转储Hadoop集群中的所有事件，以便进行进一步分析，如用户分析、司机行为分析等，从而可以将客户或司机划分为高级、常规等不同等级。
+
+## 司机资料引擎
+
+*   基于评价、服务时间精度等信息对司机进行分类
+
+## 欺诈引擎
+
+*   如果同一司机总是接同一用户的单子，他们很有可能是朋友，或者他试图利用Uber提供的激励计划。我们还可以使用相同的数据来获取交通或道路状况信息，从而进一步支持地图服务。
+
+## Kibana/Graphana - Elastic search
+
+*   日志分析
+*   跟踪HTTP API，管理配置文件，收集反馈和评价，促销和优惠券，欺诈检测，支付欺诈，激励滥用，被盗账户
+
+* * *
+
+最后，
+
+# 大数据
+
+> **延伸阅读：**  
+> Uber's Big Data Platform: 100+ Petabytes with Minute Latency: https://eng.uber.com/uber-big-data-platform/
+
+从这篇文章中可以看出，大数据是一个必须要发展的更好的解决方案。
+
+![](https://image.deepnomind.com/blog/image/21ae3477b23f31de4ee6fd3a8d96e29e)
+
+![](https://image.deepnomind.com/blog/image/2189b67c2172c184223081cdea073b73)
+
+![](https://image.deepnomind.com/blog/image/0be8a6a42a600ec1e048dcdb95a9472e)
+
+![](https://image.deepnomind.com/blog/image/ec9869854b302493e21cc991b8f257f2)
+
+![](https://image.deepnomind.com/blog/image/ef053ef9dd1a544478f2964bb256f355)
+
+> **延伸阅读：**
+> 
+> 1.  https://techtakshila.com/system-design-interview/chapter-3/#high-level-design
+>     
+> 2.  https://tianpan.co/hacking-the-software-engineer-interview#designing-uber-or-a-realtime-marketplace
+>     
+> 3.  https://weixia.info/ride-hailing-system-design.html
+>     
+> 4.  https://www.codekarle.com/system-design/Uber-system-design.html
+>     
+> 5.  https://underhood.blog/uber-payments-platform
+>     
+> 6.  https://github.com/raghav-chamarthy/Uber-replica
+>     
+> 7.  https://github.com/apache/hudi
+>     
+> 8.  https://eng.uber.com/engineering-routing-engine/
+>     
+> 9.  https://www.garyfox.co/uber-business-model/
+>     
+> 10.  https://eng.uber.com/michelangelo-machine-learning-platform/
+>     
+
+> 你好，我是俞凡，在Motorola做过研发，现在在Mavenir做技术工作，对通信、网络、后端架构、云原生、DevOps、CICD、区块链、AI等技术始终保持着浓厚的兴趣，平时喜欢阅读、思考，相信持续学习、终身成长，欢迎一起交流学习。  
+> 微信公众号：DeepNoMind
