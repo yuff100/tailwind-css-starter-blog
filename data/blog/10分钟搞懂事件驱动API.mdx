@@ -1,0 +1,237 @@
+---
+title: '10分钟搞懂事件驱动API'
+date: '2022-01-15'
+tags: ['架构']
+draft: false
+summary: '什么是事件驱动API？和REST API有什么不一样的地方？怎样实现事件驱动API？'
+---
+
+> _什么是事件驱动API？和REST API有什么不一样的地方？怎样实现事件驱动API？原文：[Event-driven APIs — Understanding the Principles](https://medium.com/event-driven-utopia/event-driven-apis-understanding-the-principles-c3208308d4b2)_
+
+![图片来源：Christian Dina@Pexels](https://image.deepnomind.com/blog/image/08bf0f02cdee334f75321f68ef41e88c)
+
+通过本文，你将会知道什么是事件驱动API，它们是如何与消费者交互的，有哪些技术选择，以及如何使用AsyncAPI规范对其进行文档化。
+
+* * *
+
+# 轮询没有前途，我们必须继续前进
+
+作为信息的消费者，我们渴望知道发生了什么事情。
+
+我的包裹到哪里了？比赛的比分是多少？狗狗币今天表现如何？类似的还有很多。如今，大多数互联网用户都希望信息直接被推送到面前，而不是需要去拉取信息。
+
+![](https://image.deepnomind.com/blog/image/19b7300f792b24726c631db1a1a7c0c3)
+
+我们在构建应用程序的时候，怎样才能将信息推送给用户？
+
+如今大量互联网应用都是由HTTP API提供支持的，其交互模型是请求-响应驱动的同步模型。消费者要想知道服务器上发生了什么，唯一的方法是持续的轮询服务器。轮询非常可怕，在客户端和服务端都浪费了宝贵的CPU时间。
+
+因此，一定有办法改进这种交互模型。
+
+# 现代用户体验
+
+但是，最近在这个领域出现了一些令人兴奋的发展。
+
+如果你用过Facebook、Instagram或Uber等大型互联网公司开发的应用程序，那你一定体验过它们提供的那些吸引人的实时互动。例如，当有人喜欢你的内容时，Facebook会立即通知你。Uber会告诉你接你的车现在在哪里，以及还需要多长时间到达。
+
+![Uber会通知你你的车到了](https://image.deepnomind.com/blog/image/daa05051f363c1f433ae082c2666324c)
+
+这些互动吸引用户停留在他们的平台上，参与度获得了前所未有的提高。
+
+它们是如何做到的？如果他们能做到，为什么你不能？让我们找出答案。
+
+# 事件驱动API基础
+
+REST API与消费者的交互模型通常是单向、同步的，为了获得最新信息，使用者总是需要轮询后端。
+
+如果我们将这个模型倒过来，允许后端在发生事件的时候通知客户端呢？
+
+这就是“**事件使能（Event-enabled）**”API的基础。与轮询不同，它们经常被称为“**异步（asynchronous）**”、“**推送（push）**”或“**流（streaming）**” API，因为它们向客户端不断推送信息。
+
+事件驱动API必须向其消费者提供两种功能：
+
+1.  允许消费者订阅感兴趣的事件的机制。
+2.  以异步方式向订阅用户交付事件。
+
+因此，我们可以为事件驱动API定义如下所示的交互模型。
+
+![](https://image.deepnomind.com/blog/image/e3975146bb177ad17e30c915074ccac4)
+
+## 1. 客户端订阅API
+
+此时，事件驱动API的客户端向API注册希望接收异步更新的意图，这称为订阅。在订阅时，客户端通常指定API应该向其发布更新事件的接口。
+
+## 2. 异步事件交付
+
+当后台发生了一些有趣的事情，API以事件的形式异步的将其传递给所有订阅的客户端。
+
+**示例**
+
+在深入研究技术细节之前，我们先举一个例子来理解事件驱动API在现实中的工作方式。
+
+想象一下，你正通过一个Web应用程序投诉停电。在收到投诉后，Web应用程序会把你带到“我的投诉”页面，在那里它会显示你所有的投诉以及他们的状态。
+
+![](https://image.deepnomind.com/blog/image/15091781984772cc8c9f08afd5521693)
+
+让我们假设投诉的状态如下所示。
+
+![](https://image.deepnomind.com/blog/image/80fda4652a63e95c1e4ab3f329628a23)
+
+作为一个没有耐心的客户，您现在可以用这个Web应用程序做些什么呢？不断刷新“我的投诉”页面，直到你看到投诉状态有任何变化，对吗？
+
+好吧，这很痛苦，肯定不是一个好的用户体验。现在，让我们看看如何使用事件驱动API构建相同的应用程序。
+
+使用事件驱动API，直到提交投诉为止，体验都和之前差不多，应用程序将带您进入“我的投诉”页面。但这一次，当投诉的状态有任何变化时，应用程序会向您显示一条通知。
+
+![该应用程序将对您的投诉发出状态更改通知](https://image.deepnomind.com/blog/image/b384682474e6ed0479373bef9c4e7418)
+
+以上就是当今互联网发展的一个例子，后端直接将状态变化发送给了浏览器，因此不需要刷新页面就可以看到你的投诉的状态变化。
+
+因此，作为客户，你知道有人正在处理你的投诉，事情正在后台发展。
+
+# 构建事件驱动API
+
+假设您现在已经对事件驱动API的功能及其操作原则有了扎实的理解。
+
+现在的问题是如何构建它们。
+
+当前已经有一些协议和框架，可以帮助我们构建事件驱动API，将事件推送给消费者。然而，不管具体实现是怎么样的，上面讨论的基本交互模式都是相同的。
+
+也就是说，作为API的提供者，您应该让您的使用者订阅API。其次，您应该异步的交付事件通知。
+
+在实现事件驱动API时，有几种技术可以选择，每个选择都取决于您的用例、技能集和基础设施限制，**Webhooks、WebSockets和Server-Sent Events (SSE)** 是其中最重要的几个选择。
+
+## 技术选择#1 - Webhooks
+
+如果你正在构建一个事件驱动API，也许最直接的方法就是允许你的消费者注册一个Webhook来接收来自API的事件通知。
+
+Webhook是一个由事件消费者管理的可公开访问的HTTP POST接口，事件生产者（比如API服务器）可以在事件发生时向Webhook发送事件通知。
+
+你可以把Webhook想象成反向API，它们完全将HTTP请求和响应彼此分离。
+
+作为API提供者，在为支持Webhook的消费者构建事件驱动API时，必须考虑两件事情。
+
+### 1. 允许消费者订阅API
+
+消费者可以通过注册一个Webhook URL作为回调来订阅你的API。
+
+Webhook订阅本身可以作为一个REST资源进行管理，它必须包含事件类型列表和最低级别的订阅(回调)URL，此外还应该提供取消订阅的方法。
+
+这个链接（https://developer.surveymonkey.com/api/v3/#webhooks） 提供了SurveyMonkey的Webhook订阅请求格式。
+
+### 2. 向消费者异步交付事件
+
+订阅之后，下一个任务是向使用者交付事件。
+
+作为API提供者，当后端发生了一些有趣事情（例如数据库记录被更新），可以对消费者的Webhook进行HTTP POST调用。
+
+Webhook强制事件消费者建立一个可公开访问的HTTP接口来接收事件，同时还伴随着其他问题，比如使用证书保护接口，防止DDoS攻击等。从长期来看，这些都可能增加维护负担。
+
+此外，Webhook不能用于向终端消费者（如手机和单页应用程序(SPA，Single Page Applications))推送事件通知，因为它们没有HTTP接口。
+
+尽管有上述缺陷，Webhook仍然是实现服务器到服务器事件通知机制的理想选择。
+
+由于使用简单，Webhook是构建异步API的首选。目前有100多个API供应商提供基于Webhook的API，[Kin Lane有一篇文章](https://apifriends.com/api-streaming/100-webhook-implementations/)对此进行了详细介绍。
+
+![Webhook参考架构](https://image.deepnomind.com/blog/image/c93739320766f678f9a67ff0c6478a10)
+
+## 技术选择#2 - WebSockets
+
+[WebSockets](https://html.spec.whatwg.org/multipage/web-sockets.html)是另一个可以用来构建事件驱动API的协议。与Webhook不同，WebSocket协议允许服务器和客户端之间进行持续的双向通信，这意味着双方都可以在需要的时候进行通信以及交换数据。
+
+和Webhooks类似，在使用WebSockets构建事件驱动API时，必须考虑两件事情。
+
+### 1. 允许消费者订阅API
+
+为了不断获得事件通知，消费者必须先和API建立WebSocket连接。
+
+通过对API进行HTTP调用，然后请求对该连接进行升级，从而建立WebSocket连接，然后可以使用WebSocket协议在单个TCP连接上进行通信。
+
+下面的代码片段演示了如何通过Javascript建立WebSockets连接。
+
+```javascript
+"use strict"
+var connected = false;
+var socket;
+
+function connect() {
+    if (! connected) {
+        var clientId = generateClientId(6);
+        socket = new WebSocket("ws://" + location.host + "/dashboard/" + clientId);
+
+        socket.onopen = function() {
+            connected = true;
+            console.log("Connected to the web socket with clientId [" + clientId + "]");
+            $("#connect").attr("disabled", true);
+            $("#connect").text("Connected");
+        };
+        socket.onmessage =function(m) {
+            console.log("Got message: " + m.data);
+            $("#totalOrders").text(m.data);
+        };
+    }
+}
+
+function generateClientId(length) {
+   var result           = '';
+   var characters       = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+   var charactersLength = characters.length;
+   for ( var i = 0; i < length; i++ ) {
+      result += characters.charAt(Math.floor(Math.random() * charactersLength));
+   }
+   return result;
+}
+```
+
+### 2. 向消费者异步交付事件
+
+当事件发生时，通过将数据写入WebSockets连接来通知消费者。站在编程的角度，非常类似于写套接字。
+
+事件消费者可以解析连接中的事件数据并相应的更新其UI。
+
+因为是在TCP层上进行通信，没有HTTP报头的开销，因此WebSockets要比WebHooks高效得多。在WebSockets出现的早期，它们受到了浏览器缺乏支持的制约。不过，现在大多数浏览器都已经支持了WebSockets。
+
+![WebSocket参考架构](https://image.deepnomind.com/blog/image/c300d9da3a2dafc759439fd3b34523c0)
+
+如果想亲身体验WebSockets，可以参考这篇文章：https://medium.com/event-driven-utopia/building-a-real-time-sales-dashboard-with-websockets-and-quarkus-d57c3f1554ce。
+
+## 技术选择#3 - Server-Sent Events(SSE)
+
+[服务器发送事件(Server-Sent Events，简称SSE)](https://html.spec.whatwg.org/multipage/server-sent-events.html)是一种与WebSockets非常相似的通信协议，但隐含条件是只支持**单向数据**。SSE允许基于浏览器的消费者接收从API服务器发送的事件通知流。
+
+### 订阅和事件交付
+
+订阅API的时候，消费者通过创建一个新的[EventSource](https://html.spec.whatwg.org/multipage/server-sent-events.html#the-eventsource-interface)对象并通过常规HTTP请求将接口URL传递给服务器。此后，使用者继续侦听带有事件通知流的响应。
+
+如果没有更多的事件要发送，服务器(API)可以终止连接。或者，服务器可以打开连接，直到使用者显式关闭它。
+
+作为单向协议，考虑到更少的带宽消耗以及不用维护与消费者之间的HTTP长连接，SSE是构建事件驱动API的很好的选择。然而，这种方案存在一些与安全性相关的问题，比方说没有办法对API使用者进行认证。
+
+![SSE参考架构](https://image.deepnomind.com/blog/image/6c7e70fc9b575eacf2f103e299a150d1)
+
+# 用AsyncAPI规范化事件驱动API
+
+一个好的API定义是由全面的文档和一组特定于语言的代码生成器组成的。REST API通过OpenAPI规范满足了这种需求。幸运的是，对于事件驱动API，我们有[AsyncAPI](https://www.asyncapi.com/)规范。
+
+AsyncAPI规范是一个机器可读的文档，用于记录和描述事件驱动API。它不仅是一个规范，而是一个包含了代码生成器、验证器和测试生成器的丰富的生态系统。
+
+> _AsyncAPI与OpenAPI基于相同的元素进行设计，并共享许多通用构造以简化应用，还提供了一些附加特性以适应事件的需求。它支持各种各样的消息和传输协议(如AMQP, MQTT, WebSockets, Kafka, JMS, STOMP, HTTP等)和事件定义格式。因此，API定义将包含事件有效负载定义、管道名称、应用/传输头、协议和其他用于事件连接、发布和订阅的语义。——Dakshitha Ratnayake_
+
+强烈建议您在定义自己的事件驱动API的时候遵循AsyncAPI规范。
+
+# 其他
+
+事件驱动API在可用性、性能和响应性方面为终端应用程序增加了丰富的用户体验。典型的事件驱动API必须向其消费者提供两种功能。首先，它应该允许用户订阅API。其次，应该异步的向订阅者发送事件通知。
+
+有几种技术选择可以用于构建事件驱动API，Webhooks、WebSockets和Server-Sent Events (SSE)就是一些典型的例子。此外，为了支持更广泛的社区采用、提高可维护性以及实现代码的自动化生成，文档也是非常重要的，AsyncAPI规范最好地满足了这个目标。
+
+需要注意的是，事件驱动API并不仅局限于它们的实现，应该综合考虑其他相关方面，如API管理系统、集中事件代理和企业集成解决方案等，以管理API的生命周期、管理事件订阅，并提供系统之间的连接。
+
+在Dakshitha Ratnayake的文章[《微服务体系架构中的事件驱动API》](https://github.com/wso2/reference-architecture/blob/master/event-driven-api-architecture.md)中，分析了在组织中采用、构建和操作事件驱动API的推荐参考体系架构。
+
+# 参考文献
+
+[Dakshitha Rathnayake — Event-driven APIs in Microservice Architectures](https://github.com/wso2/reference-architecture/blob/master/event-driven-api-architecture.md)  
+[Emmanuel Picard — Event-driven vs REST API interactions](https://apifriends.com/api-management/event-driven-vs-rest-api-interactions/)  
+[Kristopher Sandoval — 5 Protocols For Event-Driven API Architectures](https://nordicapis.com/5-protocols-for-event-driven-api-architectures/)  
+[Lukasz Gornicki — WebSocket, Shrek, and AsyncAPI — An Opinionated Intro](https://www.asyncapi.com/blog/websocket-part1)
