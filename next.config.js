@@ -7,13 +7,13 @@ const withBundleAnalyzer = require('@next/bundle-analyzer')({
 // You might need to insert additional domains in script-src if you are using external services
 const ContentSecurityPolicy = `
   default-src 'self';
-  script-src 'self' 'unsafe-eval' 'unsafe-inline' pagead2.googlesyndication.com giscus.app analytics.umami.is cloud.umami.is *.disqus.com *.disquscdn.com waline-brown-mu.vercel.app;
+  script-src 'self' 'unsafe-eval' 'unsafe-inline' pagead2.googlesyndication.com ep2.adtrafficquality.google giscus.app analytics.umami.is cloud.umami.is *.disqus.com *.disquscdn.com waline-brown-mu.vercel.app;
   style-src 'self' 'unsafe-inline' *.disquscdn.com;
   img-src * blob: data:;
   media-src *.s3.amazonaws.com;
-  connect-src * waline-brown-mu.vercel.app pagead2.googlesyndication.com googleads.g.doubleclick.net tpc.googlesyndication.com;
+  connect-src * waline-brown-mu.vercel.app pagead2.googlesyndication.com googleads.g.doubleclick.net tpc.googlesyndication.com ep2.adtrafficquality.google;
   font-src 'self' *.disquscdn.com;
-  frame-src giscus.app disqus.com waline-brown-mu.vercel.app googleads.g.doubleclick.net tpc.googlesyndication.com pagead2.googlesyndication.com
+  frame-src giscus.app disqus.com waline-brown-mu.vercel.app googleads.g.doubleclick.net tpc.googlesyndication.com pagead2.googlesyndication.com ep2.adtrafficquality.google
 `
 
 const securityHeaders = [
