@@ -53,3 +53,10 @@ agents
 .session-log
 
 .venv-tools
+
+# open-mem: Auto-generated folder context files.
+# Uncomment to exclude from version control (recommended for large projects):
+# **/AGENTS.md
+.omo
+.open-mem
+.playwright-mcp
