@@ -1,0 +1,101 @@
+---
+title: '现代软件架构师的 10 个技巧'
+date: '2022-02-03'
+tags: ['架构']
+draft: false
+summary: '作为软件架构师，我们既需要了解广受验证的设计方法，也需要知道业界的发展趋势，从而为业务提供前瞻性的架构设计，帮助实现业务成功。'
+---
+
+> _作为软件架构师，我们既需要了解广受验证的设计方法，也需要知道业界的发展趋势，从而为业务提供前瞻性的架构设计，帮助实现业务成功。原文：[Top 10 Tips You Should Know As A Modern Software Architect](https://ankurkumarz.medium.com/top-10-tips-you-should-know-as-a-modern-software-architect-8e602c6c998f)_
+
+随着技术的快速发展，软件架构每天都有新的模式和技术诞生。本文总结了作为一名现代软件架构师应该知道的10个技巧。
+
+# 1 — 关注那些为微服务架构（MSA，Microservices Architecture）提供支持的框架
+
+*   随着微服务架构成为主流，大多数框架已经开始按照微服务架构的要求重塑自己。
+*   框架需要支持的关键功能是轻量级的、拥有最小的内存占用、易于学习、支持容错、具有可观察性（跟踪、度量、日志）、支持安全性（认证和授权）等。
+*   虽然Java生态中已经有[Spring](https://spring.io/)和[Play Framework](https://www.playframework.com/)这样的框架，但是仍然需要关注新的框架（如[Helidon](https://helidon.io/)、[Quarkus](https://quarkus.io/)或[Micronaut](https://micronaut.io/)），并随时准备根据需求进行调整，。此外，像Spring这样的成熟玩家也提供了新的选择，比如用于微服务的[Reactive Stack](https://spring.io/reactive)、[Spring GraphQL](https://spring.io/projects/spring-graphql)、[RSocket with Spring Boot](https://spring.io/blog/2020/03/02/getting-started-with-rsocket-spring-boot-server)等，需要根据具体的用例来选择应用。
+*   其他语言也有类似的趋势，比如Golang的[Gokit](https://gokit.io/)和[Gomicro](https://github.com/asim/go-micro), Python的[Flask](https://flask.palletsprojects.com/), [Bottle](https://bottlepy.org/docs/dev/), [Falcon](https://falcon.readthedocs.io/)和[Nameko](https://github.com/nameko/nameko)，以及NodeJS的[Molecular](https://moleculer.services/)和[Nest](https://nestjs.com/)。
+*   微服务架构的另一个关键点是，不需要为所有微服务采用单一框架或技术，可以根据特定微服务的机制和需求选择合适的编程语言和框架。
+*   阅读这篇关于Java中微服务演变的文章：https://vedcraft.com/architecture/evolution-of-microservices-frameworks-in-java/。
+
+# 2 — 选择适合微服务通信的模式和技术
+
+*   微服务之间的通信模式奠定了将来演化的基础，根据不同的用例，可以有很多选择。
+*   首先选择数据架构模式，然后选择通信风格。
+*   有很多二进制消息格式可以提供高效的通信，对于消息格式的多种选择，如下所示:
+
+![图A -微服务通信设计选项决策表](https://image.deepnomind.com/blog/image/3788252f53df0f4616acc306bb5c8fd8)
+
+# 3 — 对API采用标准化和设计优先的方法
+
+*   API的开发是一个成熟的领域，有很多标准、指南和方法，并且还在不断演进。虽然有很多不同的观点，但以下标准有助于在API开发方面实现企业内部的一致性。
+*   阅读这篇文章（https://vedcraft.com/architecture/standards-for-defining-event-driven-and-restful-apis/），了解RPC风格和事件驱动API的标准和指南。
+
+![图B - 服务和API标准的演进](https://image.deepnomind.com/blog/image/a75f5d376a2c7971b3f5ebb0e2c7bec9)
+
+# 4 — 考虑将服务网格作为加速器
+
+> 在软件架构中，服务网格是一个专用的基础设施层，通过代理为服务之间或微服务之间的通信提供帮助。——维基百科
+
+![图C - 服务网格核心能力](https://image.deepnomind.com/blog/image/2f05cb3ed4a91cef848792071350fcae)
+
+*   服务网格正在成为处理微服务通信和网络的标准。此外，它还可以提供其他辅助功能，如服务发现、客户端负载平衡、超时、重试和熔断、安全性等。
+*   注意，虽然服务网格一开始是作为一种更好的解决方案帮助RPC风格的服务间通信，但现在已经出现了一些新的模式，比如用于事件驱动微服务的[Event Mesh](https://solace.com/what-is-an-event-mesh/)。
+*   另外一点是服务网格与API管理/网关解决方案有部分功能重叠，不同方向的专家对它们的适用性有着不同的观点。好的解决方案可以在两者之间取得平衡，让两者协作完成各自适用的职责。
+
+# 5 — 在任何合适的地方使用云原生架构
+
+通常，云原生与云服务提供商（如AWS、Azure、Google Cloud等）提供的云服务是一个意思，但最重要的是构建云原生的架构。[云原生计算基金会（CNCF，Cloud Native Computing Foundation）](https://www.cncf.io/)是Linux基金会的下属项目（成立于2015年），专注于云原生软件的发展。
+
+根据他们的[章程](https://github.com/cncf/foundation/blob/master/charter.md)，云原生技术可以定义为:
+
+*   云原生技术使组织能够在公共、私有和混合云等现代动态环境中构建和运行可伸缩的应用程序。容器、服务网格、微服务、不可变基础设施和声明式API都是这种方法的例证。
+*   这些技术支持具有弹性、可管理的和可观察的松耦合系统。结合强大的自动化能力，允许工程师以最小的工作量频繁、可预测的进行影响广泛的变更。
+
+作为软件架构师，我们需要了解云原生技术。目前由CNCF分享的云原生技术地图囊括了系统的方方面面，请开始在未来的架构设计中考虑云原生技术。
+
+![图D - 来源:https://landscape.cncf.io/](https://image.deepnomind.com/blog/image/fa9f33149299299dce83f6c6539c7d2c)
+
+# 6 — 将可观测性应用于端到端可见性
+
+*   可观测性被定义为一种度量方法，用来衡量基于系统外部输出可以推断出系统内部状态的程度。简单来说，可观测性决定了我们能在多大程度上理解复杂系统。
+*   可观测性将监控的概念扩展到了新的层次，包括四个关键支柱——端到端可见性的度量、跟踪、事件和日志(如下所示)。
+*   作为一种软件架构，与可观测性相关的SRE实践对于确保所考虑的系统在上线之后能够维持业务需求至关重要。
+
+![图E - 可观测性四大支柱(MELT)](https://image.deepnomind.com/blog/image/fea88cc74ed6cf0d8a0f3ed17d08d507)
+
+# 7 — 应用Kubernetes作为基础平台
+
+*   Kubernetes是新的Linux，并逐渐成为事实上的应用程序通用平台标准。作为**混合云引擎（hybrid cloud engine）**和**平台即服务的微服务及云原生架构（platform-as-a-service for Microservices & cloud-native architecture）**，Kubernetes得到了快速的普及。阅读这篇文章（https://vedcraft.com/tech-trends/solution-options-for-choosing-kubernetes-management-strategy/ ）可以获得更多关于Kubernetes管理策略和方法的细节（如下所示）。
+*   作为软件架构师，考虑到Kubernetes在行业中的广泛接受度以及作为多种技术解决方案中的基础作用，我们需要确保自己很好的掌握了Kubernetes。
+
+![图F - 来源:https://vedcraft.com/tech-trends/solution-options-for-choosing-kubernetes-management-strategy/](https://image.deepnomind.com/blog/image/951cc04b5db600d5348cbabb4e2124ff)
+
+# 8 — 利用托管服务和无服务器作为基础模块
+
+*   作为软件架构师，重点是解决业务问题，而不仅仅是技术挑战。在云时代，托管服务是专注于交付业务价值、将技术管理留给专家的关键因素。
+*   云服务提供商（如AWS、Azure、Google Cloud）提供了全面的服务目录，然而作为架构师，也应该探索其他专业供应商和解决方案创业公司提供的服务。
+*   CNCF将托管服务和无服务器技术大致分为四个部分——工具、框架、平台和托管平台（如下所示）：
+
+![图G - 来源:https://landscape.cncf.io/serverless](https://image.deepnomind.com/blog/image/18e6084657794a5477df33d3cac6a26e)
+
+# 9 — 关注并应用零信任架构实践
+
+*   零信任安全（又称无边界安全）是现代架构中思考安全的新方式，包含四大支柱——人、设备、网络和工作负载。
+*   作为软件架构师，创建零信任架构（ZTA，Zero-trust architecture）是当务之急。[NIST(国家标准与技术研究所)](https://www.nist.gov/)认识到，向ZTA的迁移是一个过程，而不是完全替换企业的基础设施。可以阅读[零信任架构白皮书](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-207.pdf)获取更多信息。
+
+![图H -来源: https://csrc.nist.gov/publications/detail/sp/800-207/archive/2019-09-23](https://image.deepnomind.com/blog/image/28c15d7e3314939433e9b6220ed3ab69)
+
+# 10 — 试验和应用自动化趋势
+
+*   最后，软件架构师需要了解行业中发生的自动化趋势。对现代软件架构师来说，不断试验和应用新趋势是一项重要的工程技能。
+*   与构建和发布、质量工程（软件测试）以及软件部署和基础设施管理相关的自动化是作为软件架构师需要注意的三个关键领域。
+*   [GitOps](https://about.gitlab.com/topics/gitops/)（一种为云原生应用实现持续部署的方法）和[MLOps](https://blogs.nvidia.com/blog/2020/09/03/what-is-mlops/)（一组为企业成功运行AI的最佳实践）是根据需要应用新趋势的新例子。
+
+总之，这些技巧可以帮助我们建立基于现代实践的解决方案体系架构，但本质上它取决于所考虑的系统和相关的上下文。
+
+![现代软件架构师的10个技巧](https://image.deepnomind.com/blog/image/01c858cfc65935b5f4e8013dc740efc7)
+
+> 你好，我是俞凡，在Motorola做过研发，现在在Mavenir做技术工作，对通信、网络、后端架构、云原生、DevOps、CICD、区块链、AI等技术始终保持着浓厚的兴趣，平时喜欢阅读、思考，相信持续学习、终身成长，欢迎一起交流学习。  
+> 微信公众号：DeepNoMind
