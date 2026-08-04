@@ -1,0 +1,165 @@
+---
+title: '从 IaC 到 IaD'
+date: '2022-02-04'
+tags: ['DevOps']
+draft: false
+summary: '用代码定义基础设施可以帮助我们方便的构建、跟踪基础设施，但代码本身隐含着逻辑和变化，对于基础设施来说，定义为数据更为恰当。'
+---
+
+> _用代码定义基础设施可以帮助我们方便的构建、跟踪基础设施，但代码本身隐含着逻辑和变化，对于基础设施来说，定义为数据更为恰当。原文：[Shifting from Infrastructure as Code to Infrastructure as Data](https://medium.com/dzerolabs/shifting-from-infrastructure-as-code-to-infrastructure-as-data-bdb1ae1840e3)_
+
+![图片来源：Dzero Labs](https://image.deepnomind.com/blog/image/280befd28013768c8079790ae0330c01)
+
+# 人人想要IaC
+
+我一直被“基础设施即代码”(IaC，Infrastructure as Code)的理念所吸引。早在2014年，我的职责就是帮助团队安装供应商产品的新版本，不仅包括安装新软件，还包括配置新硬件。那时还没有云计算(至少在我工作的组织中是这样)，意味着我们只能以非常痛苦的手动过程来配置新的虚拟机，需要写大量的文档和通过很多审批。尽管我们已经设法提供了虚拟机并装好了软件，但还是有很多技术和政治障碍。
+
+那时候我就想，“这真的很有趣!(呃……也许除了政治……)如果能找到一份既能配置硬件，又能应用软件技能的工作，那就太好了。”我感觉好像发现了一些东西……😉
+
+快进到2021年，现在处于云时代，如果不是通过编程的方式，根本无法想象如何配置和管理IT基础设施(网络、虚拟机、Kubernetes集群、负载均衡器等)，我们进入了基础设施即代码(IaC)的时代。
+
+# 凭空创造基础设施？
+
+![图片来源：Sanketh Hiremath @unsplash](https://image.deepnomind.com/blog/image/00dcb70bad387e0f333671980e597211)
+
+最重要的是，我们需要理解当使用IaC时，基础设施不是凭空产生的。让我们再深入挖掘一下……
+
+很多人都知道公有云。公共云包括亚马逊的[AWS](https://aws.amazon.com/)、谷歌的[GCP](https://cloud.google.com/)、微软的[Azure](https://azure.microsoft.com/en-ca/)、甲骨文的[OCI](https://www.oracle.com/ca-en/cloud/)、[IBM Cloud](https://www.ibm.com/cloud)等等。这些公有云的底层是一个遍布全球的庞大数据中心网络，拥有堆积如山的硬件，所有这些硬件都由云服务商自己的框架管理。
+
+尽管基础设施可能会被认为是无限的，但实际上私有云只有有限的物理基础设施。有两种私有云类型：内部的和托管的。内部私有云托管在组织自己的机房或数据中心，托管私有云由第三方服务提供商拥有和运营。托管私有云可以是单租户(专用于一个公司的数据中心)，也可以是多租户(托管多个公司的数据中心)。像[OpenStack](https://www.openstack.org/)、[Apache CloudStack](https://cloudstack.apache.org/)、[Azure Stack](https://azure.microsoft.com/en-ca/overview/azure-stack/)、[IBM Cloud Private](https://www.ibm.com/blogs/cloud-computing/2017/10/31/what-is-ibm-cloud-private/)等框架都可以用来管理私有云。
+
+当我们在公有云或私有云中提供基础设施时，一般会通过API进行配置，API与数据中心管理框架通信，数据中心管理框架从可用物理资源池中为我们提供虚拟资源(如虚拟磁盘、虚拟网络、虚拟机)。
+
+# 最佳实践
+
+在配置云基础设施时，我们应该始终遵循以下关键实践，从而让我们始终保持愉悦、减少压力：
+
+## 1. 短生命周期（Ephemerality）
+
+云基础设施的生命周期应该比较短，如果需要对基础架构进行变更，请将其拆除并重新创建。如果现在还是手动变更的，那就更有理由需要这样做了。更新配置文件，把变更纳入版本控制，这样就可以跟踪所有变更。
+
+永远不要害怕多次创建和破坏基础设施。如果很好的定义了基础架构，每次重新创建时，它都会以相同的方式运行，所以有什么可怕的呢？
+
+> 注意：基础架构应该是不可变的，无状态组件的生命周期应该是短暂的，而有状态组件则不是。数据库和事件中心不能随便拆除和重新配置。这个过程应该完全自动化，但是重新分配一个数据库或者像Kafka这样的事件中心可能会非常复杂并具有破坏性。
+
+## 2. 版本控制（Versioning）
+
+始终对基础架构定义进行版本控制，以便在需要时轻松重新创建资源。
+
+## 3. 简单化（Simplicity）
+
+一旦基础设施自动化过程变得过于复杂，并发现自己试图方枘圆凿，请立即停下来。例如，如果发现自己的工作超出了API或基础设施配置工具的限制，那么是时候进行备份并重新考虑策略了。
+
+# 基础设施即数据（Infrastructure as Data）
+
+撇开最佳实践不谈，在供应云基础设施时，还有一件事我们还没有解决。当我们为云基础设施编写代码时，我们真的是在 _编写代码_ 吗？答案是否定的。😱
+
+让我们回到开始的地方，当我不得不以老式的方式提供基础设施时，必须将一组规格或清单交给能够满足我要求的团队。对于基于云的基础设施，我们也在做同样的事情——只是我们的规范现在是由API传递和实现的，而不是由一个人。你不用关心这个请求是如何被实现的，只需要知道它被准确的实现了。
+
+举个例子，如果你准备创建一个有5个节点的Kubernetes集群，集群上的工作负载是内存密集型的，你希望节点拥有高RAM和中等计算能力。当你告诉谷歌启动GKE集群时，只需要告诉它启动5个RAM密集型计算节点。当你创建集群时，不会在意幕后发生了什么，只关心最终得到了想要的那个集群。
+
+因此，我们需要做的只是描述想要创建的资源，这意味着我们应该使用一些常见的格式，如JSON或YAML来描述它们。什么是JSON和YAML？它们只是表示 _数据_ 的纯文本。🤯
+
+这个概念不是最近才出现的，事实上，[Ansible的创始人迈克尔·德哈恩(Michael DeHaan)](https://en.wikipedia.org/wiki/Ansible%5C_%28software%29)在2013年的一篇[博客文章](http://radar.oreilly.com/2013/08/the-rise-of-infrastructure-as-data.html)中就说过：
+
+> "...基础设施最好的建模方式不是代码，也不是GUI，而是基于文本的、中立的、数据驱动的策略。"
+
+在文章的后面，他创造了一个术语“基础设施即数据”(IaD，Infrastructure as Data)来描述这个概念。
+
+IaD是一种对基础设施的声明式方法——也就是说，你只要说出想要的内容，而不指定实现它的精确操作或步骤。这是[Kubernetes Controllers](https://medium.com/dzerolabs/just-in-time-kubernetes-a-beginners-guide-to-kubernetes-core-concepts-19ee7acbafa1)，许多CI/CD工具(比如[GitHub Actions](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions))，当然还有[Ansible](https://www.ansible.com/)的概念。
+
+# 谁会关心？
+
+到这个时候，你可能想知道为什么我要花这么多精力试图说服你，IaD是比IaC更好的范式。嗯，这么想很正常。
+
+实话实说，这可以归结为一个词：_简单_。我已经花了足够的时间在GCP和Azure上配置云基础设施，可以告诉你，当你开始扩展基础设施时，事情会变得非常复杂。
+
+当然，你会希望以一种良好的、结构化的方式配置和管理基础设施。老兄，这就是JSON的作用。但是要编写代码来实现？老实说，这毫无意义，基础设施是静态的，不是应用程序。
+
+将基础设施视为 _代码_ 打开了技术债的大门。记住，并不是所有的代码都是平等的，糟糕的代码会让你的生活变成人间地狱。
+
+它也会带来不必要的复杂性。为什么你需要管理一大堆代码来定义基础设施，而实际上你所需要做的只是 _描述_ 它？
+
+# 配置云基础设施的方法
+
+我们暂时把IaD放在一边，转而讨论配置云基础设施。我保证这是有意义的，请耐心听我说。
+
+配置云基础设施的方法有很多。当我们进行配置时，这些方法会执行我们的代码，或者某些框架会解释我们的基础架构定义。下面我们粗略看一下这些不同的方法。
+
+## Terraform
+
+[Hashicorp](https://www.hashicorp.com/)的[Terraform](https://www.terraform.io/)是非常流行的平台中立工具，用于为各种公有云和私有云框架提供基础设施。它基于专有的类JSON的语言[HCL（Hashicorp Configuration Language）](https://github.com/hashicorp/hcl)来定义基础设施，支持一些非常简陋的循环、条件以及变量。Terraform依赖一个JSON [_状态文件_](https://www.infrastructurecode.io/blog/the-terraform-state-file-an-overview) 来跟踪创建的基础设施，可以将此文件视为结构化日志。
+
+## Pulumi
+
+[几个前微软员工](https://www.zdnet.com/article/former-microsoft-midori-team-members-launch-pulumi-an-open-source-cloud-development-company/)创立了[Pulumi](https://www.pulumi.com/)，目标直指广阔的Terraform市场。它也是平台中立的，借用了Terraform的许多概念，包括状态文件。主要的区别是Pulumi允许通过使用常规的ole编程语言来创建基础设施。Pulumi目前支持的语言包括：TypeScript、Javascript、Python、Go和C#。
+
+> 注：Terraform最近通过推出Pulumi风格的[Terraform CDK](https://github.com/hashicorp/terraform-cdk)来反击Pulumi。
+
+## Ansible
+
+虽然一开始Ansible只是一个配置管理工具，但现在也可以用来[配置和管理云基础设施](https://www.ansible.com/integrations/cloud)。Ansible使用YAML来定义基础设施。与Terraform和Pulumi不同的是，Ansible是无状态的。
+
+## Crossplane
+
+[Crossplane](https://crossplane.io/)是一个运行在Kubernetes上的云中立工具，用于在Kubernetes之外提供云资源。(我知道……这会让你很困惑！)因为它是原生支持Kubernetes的，所以是声明式的，并且使用YAML来描述正在配置的基础设施。Crossplane还很新，因此，虽然它支持许多[AWS资源](https://doc.crds.dev/github.com/crossplane/provider-aws)，但对其他云服务商(如[Azure](https://doc.crds.dev/github.com/crossplane/provider-azure)和[GCP](https://doc.crds.dev/github.com/crossplane/provider-gcp))的支持相对较少。我写了一篇[文章](https://medium.com/dzerolabs/using-crossplane-to-provision-a-kubernetes-cluster-in-google-cloud-cf5374d765ee)记录了用Crossplane配置GCP集群的探索。
+
+## 云服务商的命令行工具（Cloud Provider CLIs）
+
+值得一提的是，云服务商的命令行工具是另一种配置基础设施的流行方式。当我说“云服务商的命令行”时，我指的是像Azure的[az](https://docs.microsoft.com/en-us/cli/azure/)命令行和谷歌云平台的[gcloud](https://cloud.google.com/sdk/gcloud)命令行。其他云服务商也有类似的命令行工具。这些命令行工具有一个共同点：它们提供了一种与云服务商API交互的方式，从而可以创建和管理资源。如果采用这种方式，我们需要编写包装器代码或者脚本来进行不同的命令行调用，从而实现基础设施的配置。
+
+# 哪个工具最好？
+
+![图片来源：wearearmadillo.com](https://image.deepnomind.com/blog/image/eb9b85a481002d3c25d623adfbff2c7e)
+
+上面列出的所有工具中，我认为只有两个真正将基础设施视为数据，并且提供了云基础设施的最佳实践：_Ansible和Crossplane_。
+
+为什么？
+
+Terraform(声明式)和Pulumi(基于代码)**都使用状态文件**，我意识到我可能是为数不多的被这个问题困扰的人之一。状态文件的存在是为了跟踪Terraform创建了哪些资源，从而确保它们不会被不必要的意外重新创建。虽然这是一个勇敢的想法，但我发现这违背了云基础设施的短生命周期原则——我们就_应该_重新创建它。
+
+同样的，假设我们开始使用Terraform创建3个云资源。然后添加另一个资源，因为最初的3个资源在状态文件中，所以它们会保持原样，只有新资源被添加进去。但是你怎么知道这四种资源是和谐共存的呢？你不知道。除非你删除所有4个资源，然后从头开始重新创建它们。
+
+最后，假设我们使用Terraform创建了云资源。然后，使用云服务商的管理控制台或CLI修改了它。你猜怎么着？Terraform不知道发生了什么。状态文件不再与资源的实际状态同步。你完了！
+
+作为个人偏好，我很不喜欢Terraform的HCL，我完全读不懂HCL的代码。（对不起，Hashi的粉丝！）此外，我也不喜欢Terraform在控制流和循环方面的尝试。对我来说，这让我头晕，我讨厌这样。🤢
+
+作为软件工程师，我对Pulumi更感兴趣——我随时有可能用它接管Terraform。然而，从SRE的角度来看，它并不是声明式设计。虽然编程语言很好，但也可能导致自动化过度复杂。记住：有一种东西叫做糟糕的代码，而糟糕的代码会导致技术债。
+
+云服务商CLI是无状态的，我喜欢，但它们也不是声明式的。此外，为了使它们更加有效，还需要将它们包装在代码或脚本中。放弃了。
+
+那我们就只剩下Ansible和Crossplane了。根据定义，Ansible是声明式和无状态的，并且使用YAML，这非常容易阅读——甚至比JSON更容易阅读。赢了！此外，让我惊讶的是，通过各种云服务商提供的库，Ansible非常容易创建云基础设施。
+
+Crossplane，作为原生支持Kubernetes的工具，也是声明式的，但不是完全无状态的。你看，因为Crossplane运行在Kubernetes上，利用了[etcd](https://medium.com/pradpoddar/about-etcd-the-data-backbone-of-kubernetes-e86ea1d4feeb)（Kubernetes的分布式键值存储），每当我们更改Crossplan基础架构定义时，都会被记录在etcd中，这让你觉得它的行为就像Terraform/Pulumi的状态文件一样，只是稍微有点不同。[Crossplane的博客](https://blog.crossplane.io/crossplane-vs-terraform/)上说：“无论变更是否在预期内，它都会不断观察和纠正组织的基础设施，使其符合预期的配置。”我真的太喜欢这一点了！
+
+# 结论
+
+该死，太让人难以接受了！我们回顾一下前面的内容：
+
+*   云上创建的资源(无论是公共的还是私有的)并不是凭空创建的，而是从现有的(有限的)物理资源中分配出来的虚拟资源。
+*   基于云的基础设施应该是短暂的、简单的和版本控制的。
+*   最好将基础设施视为数据，而不是代码。
+*   基础设施即数据(IaD)不是一个新概念——它至少可以追溯到2013年!
+*   大多数云配置工具都不适合IaD，只有Ansible和Crossplane符合要求。
+
+最后奖励你一幅老鼠Susie的照片。
+
+![老鼠Susie喜欢拥抱，基础设施就是数据！图片由Dzero实验室提供。](https://image.deepnomind.com/blog/image/f1e02f69fbb379031a85770753102fdc)
+
+Peace, love, and code.
+
+> **相关文章：**  
+> Using Ansible's GCP Library to Provision a Kubernetes Cluster in Google Cloud: https://medium.com/dzerolabs/using-ansibles-gcp-library-to-provision-a-kubernetes-cluster-in-google-cloud-6fd1910f1700  
+> 
+> Using Crossplane to Provision a Kubernetes Cluster in Google Cloud: https://medium.com/dzerolabs/using-crossplane-to-provision-a-kubernetes-cluster-in-google-cloud-cf5374d765ee
+
+> **延伸阅读：**
+> 
+> *   Breaking Silos Using the Power of Infrastructure as Data in Kubernetes: https://www.redhat.com/en/blog/breaking-silos-using-power-infrastructure-data-kubernetes
+>     
+> *   I do declare! Infrastructure automation with Configuration as Data: https://cloud.google.com/blog/products/containers-kubernetes/understanding-configuration-as-data-in-kubernetes
+>     
+> *   The Rise of Infrastructure as Data: http://radar.oreilly.com/2013/08/the-rise-of-infrastructure-as-data.html
+
+> 你好，我是俞凡，在Motorola做过研发，现在在Mavenir做技术工作，对通信、网络、后端架构、云原生、DevOps、CICD、区块链、AI等技术始终保持着浓厚的兴趣，平时喜欢阅读、思考，相信持续学习、终身成长，欢迎一起交流学习。  
+> 微信公众号：DeepNoMind
