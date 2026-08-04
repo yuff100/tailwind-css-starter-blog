@@ -1,0 +1,168 @@
+---
+title: 'Spotify系统架构'
+date: '2022-02-02'
+tags: ['架构']
+draft: false
+summary: 'Spotify是全球最流行的音乐流媒体平台之一，为全球近4亿用户提供音乐服务。这篇文章简单分析了Spotify的系统架构，可以作为学习流媒体平台需求和架构的入口。'
+---
+
+> _Spotify是全球最流行的音乐流媒体平台之一，为全球近4亿用户提供音乐服务。这篇文章简单分析了Spotify的系统架构，可以作为学习流媒体平台需求和架构的入口。原文：[Spotify System Architecture](https://medium.com/interviewnoodle/spotify-system-architecture-6bb418db6084)_
+
+目前有很多音乐流媒体平台，比如Spotify、Apple Music、Pandora、Soundcloud和Tidal等。今天，我打算详细分析一下Spotify，这是一个集所有功能于一体的流媒体音乐服务，允许用户访问世界各地艺术家的数百万首歌曲以及其他媒体形式。相信每个年轻人都喜欢听不同韵律的音乐，为了充分利用Spotify的功能，强烈建议订阅Spotify的付费服务，它可以让你在没有任何限制的情况下收听无广告的音乐，还可以下载音乐和离线收听高质量的音频。实话实说，Spotify没有给我广告费，如果你订阅了Spotify的任何服务，Spotify也不会给我任何好处。
+
+* * *
+
+# 功能性系统需求
+
+1.  下载音乐（同一账号最多可在5台设备上下载10,000首歌曲）
+2.  推荐音乐（系统将根据算法生成量身定制的播放列表）
+3.  Spotify Connect（提供在不同设备上播放音乐的授权，可以通过手机控制同一账户下的PC播放音乐）
+4.  发现朋友的活动，发现他们喜欢的音乐（允许关注朋友，获取朋友的实时播放内容，当链接到Facebook、Instagram等其他社交媒体上时，通过搜索列表可以看到朋友的推荐）
+5.  可以通过其他平台与朋友分享音乐（复制歌曲链接，嵌入代码和Spotify URL，并分享到您的其他社交媒体应用程序）
+6.  为大部分歌曲提供歌词（Spotify和Genius合作，将为精选歌曲提供歌词）
+7.  创建播放列表（可以把任何一个播放列表变成与朋友合作的播放列表，朋友可以编辑、添加、删除或者重新排序歌曲）
+8.  私密模式（朋友们将无法看到你听了什么）
+9.  适配多种设备类型（手机、平板电脑、PC、网络播放器、电视、车载音响、智能手表、游戏机、智能显示器等）
+10.  每日推荐（Daily Mixes，根据以前听过的音乐和喜欢的音乐类型创建的播放列表 = 你的音乐品味）
+11.  Spotify广播
+12.  用户可以查看收听历史
+13.  用户可以搜索想听的歌曲
+14.  随机播放
+15.  播客和娱乐节目
+16.  排序和过滤
+17.  关注喜欢的艺术家
+18.  自动播放
+19.  音乐会
+20.  音乐切换淡入淡出效果
+21.  为艺术家捐款
+22.  基于WinAmp的可视化
+23.  无广告
+24.  无限切歌
+
+# 非功能性系统需求
+
+1.  可用性
+2.  可靠性
+3.  良好的性能
+4.  低延时
+
+* * *
+
+# 容量预估
+
+1.  活跃用户基数 = 3.65亿
+2.  活跃付费用户基数 = 1.58亿
+3.  低质量 = 每首歌3MB
+4.  高质量 = 每首歌10MB
+5.  最多可以下载一万首歌
+6.  支持超过30种语言
+7.  每天上传超过6万首歌曲
+8.  每年有800万名歌曲创作者
+9.  8000个活跃的艺术家
+
+* * *
+
+# 系统组件设计
+
+## 概要设计
+
+![](https://image.deepnomind.com/blog/image/a473b6b8da1f06e74b1c108f7e6a962f)
+
+我们的假设是：
+
+*   用户已经登录
+*   是否适合数百万用户
+*   用户播放特定的歌曲
+
+### 1. 负载均衡
+
+*   维护和处理进入服务器的流量
+*   当用户访问特定歌曲时，将转到负载均衡器
+*   我们使用轮询负载均衡，以最小的流量将请求分发到服务器，从而实现低延迟
+
+> **延伸阅读：**  
+> What is Round Robin Load Balancing? https://avinetworks.com/glossary/round-robin-load-balancing/
+
+### 2. 发布/订阅
+
+*   一个消息队列系统，用于收集所有请求，然后进行处理
+*   支持RabbitMQ、Apache Kafka
+*   当用户点击播放时，系统会处理请求，数据将被更新到艺术家服务器。用户听这首歌的次数将被存储在Artist’s-User数据库中，也可以在系统中添加缓存
+*   新信息将被更新到数据仓库中
+
+### 3. 应用服务器生产者/应用服务器消费者
+
+*   生产者来自访问歌曲的客户端应用程序，应用服务器消费者读取并处理请求。生产者和消费者是完全解耦的，彼此不可知，可以实现高可伸缩性。
+
+### 4. 数据仓库
+
+*   存储数百万或数十亿的数据（歌曲）
+*   使用Hadoop分布式文件系统
+
+### 5. 支付网关
+
+*   结账API——尝试验证支付细节并启动支付工作流，内部实现了相关状态机。
+*   计费API——与支付服务供应商通信，向用户收费。这个API是支付提供者与其支付后端之间的桥梁，是支付发生时调用的第二个内部API。
+
+* * *
+
+## 推荐算法
+
+*   **潜在因素模型**（Latent Factor Models，机器学习算法）
+
+> **延伸阅读：**  
+> Latent Variable Model: https://en.wikipedia.org/wiki/Latent\_variable\_model
+
+*   潜在因素模型基于可观察变量。
+*   因为可观察变量不是固定的，因此通常比较复杂，这将带来两个问题：
+
+1.  方程式可能无法推导出来
+2.  即使把方程式整理出来，也很难应用
+
+*   埃里克·伯恩哈德森(Erik Bernhardsson)花了6年时间开发Spotify的首个音乐算法
+*   下面的链接分享了一些关于这个模型的深刻信息：
+
+> **延伸阅读：**  
+> Model benchmarks: https://erikbern.com/2013/11/02/model-benchmarks.html
+
+*   该推荐系统采用基于潜在因素模型的隐式协同过滤方法来检测元素（用户、音乐、频率）的相似性。因此，类似的歌曲将被推荐给用户。
+*   Erik Bernhardsson还创建了一个开源的数据管道引擎（Luigi和Annoy），目前Spotify仍在使用这个引擎
+*   下面的延伸阅读文章包含了更进一步的信息
+
+> **延伸阅读：**  
+> Annoy: https://github.com/spotify/annoy  
+> Luigi: https://github.com/spotify/luigi
+
+* * *
+
+# 进一步学习
+
+> **延伸阅读：**  
+> Spotify UX Analysis and Redesign: https://blog.prototypr.io/spotify-reverse-engineering-8f6a0d9850c8
+
+*   Spotify收购了音乐智能公司Echo Nest
+
+> **延伸阅读：**  
+> How to build an amazing music recommendation system: https://towardsdatascience.com/how-to-build-an-amazing-music-recommendation-system-4cce2719a572  
+> SpotifyRecommenderSystems: https://github.com/AmolMavuduru/SpotifyRecommenderSystem  
+> Scio, Spark and Scalding: https://spotify.github.io/scio/Scio,-Scalding-and-Spark.html
+
+*   推荐结果由Apollo编写，并由Cassandra提供支持
+
+> **延伸阅读：**  
+> Apollo: https://github.com/spotify/apollo  
+> Sparkey: https://github.com/spotify/sparkey
+
+* * *
+
+# 参考资料
+
+The Best Music Streaming Services: https://www.digitaltrends.com/music/best-music-streaming-services/  
+Spotify Architecture: https://engineering.atspotify.com/tag/architecture/  
+The Brilliance of Spotify Internal APIs to Mitigate Payments: https://nordicapis.com/the-brilliance-of-spotify-internal-apis-to-mitigate-payments/  
+Key Spotify Statistics Driving Music Streaming Adoption in 2021: https://www.mobileappdaily.com/spotify-stats-in-depth  
+Recommending music on Spotify wiht deep learning: https://benanne.github.io/2014/08/05/spotify-cnns.html  
+Spotify Is Migrating from Homegrown Orchestration to Kubernetes: https://youtu.be/pruIWWBe_1o
+
+> 你好，我是俞凡，在Motorola做过研发，现在在Mavenir做技术工作，对通信、网络、后端架构、云原生、DevOps、CICD、区块链、AI等技术始终保持着浓厚的兴趣，平时喜欢阅读、思考，相信持续学习、终身成长，欢迎一起交流学习。  
+> 微信公众号：DeepNoMind
