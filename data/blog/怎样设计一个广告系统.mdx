@@ -1,0 +1,208 @@
+---
+title: '怎样设计一个广告系统'
+date: '2022-02-27'
+tags: ['架构']
+draft: false
+summary: '广告占据了互联网收入的大半壁江山，Google、FB等巨头本质上就是数字广告公司。这篇文章简单介绍了如果要设计一个数字广告系统，应该考虑哪些方面的细节。'
+---
+
+> _广告占据了互联网收入的大半壁江山，Google、FB等巨头本质上就是数字广告公司。这篇文章简单介绍了如果要设计一个数字广告系统，应该考虑哪些方面的细节。原文：[Facebook Advertising System Design & Architecture](https://medium.com/interviewnoodle/facebook-advertising-system-design-architecture-7eed10e68333)_
+
+![图片来源：Eleni Afiontzi @Unsplash](https://image.deepnomind.com/blog/image/de6c64e66129e21af8daf1ae5757eac7)
+
+_百货店大亨约翰·沃纳梅克(John Wanamaker)在100多年前曾经说过：“我花在广告上的钱有一半是浪费的，但问题是我不知道是哪一半。”_
+
+衡量广告效果的标准取决于能够提高公司盈利能力的算法/广告引擎。广告行业所需要的核心能力是算法能力、工程能力、商业理解能力。对于特定的业务问题，我们可以研究和分析合适的算法模型。工程能力帮助我们改进算法和系统架构。如果业务变得成熟和复杂，它将对架构提出更复杂的需求。要想表现出色，就必须对广告系统和工程实现的细节有深入的了解。最重要的能力是业务理解，广告是一个与商业密切相关的方向，广告系统必须通过技术手段和广告策略来提高广告主的盈利能力。
+
+> **业务(战略) + 数据 + 算法 + 系统**
+
+首先，我们应该了解广告术语和目标的领域知识。
+
+* * *
+
+# 业务性质
+
+![](https://image.deepnomind.com/blog/image/45374239e4497b7a19a6ac1919730634)
+
+基于移动业务性质，数字广告可以轻松触及不同类型的受众。
+
+![](https://image.deepnomind.com/blog/image/f83381bdf20dbc413b9e4a67812c610e)
+
+这是最基本的Facebook广告架构图。在活动层面，主要目的是确定交付目标。因此，广告设置级别将涉及用户定位、预算、CBO、地理位置、兴趣和投标。广告级别就是源材料。
+
+* * *
+
+# 广告术语
+
+1.  **品牌认知度（Brand Awareness）：** 消费者对品牌的认知度，这是推广新产品的关键步骤。
+2.  **触达（Reach）：** 通过活动可以接触到的潜在客户的估计数量。
+3.  **参与度（Engagement）：** 创造性的想法能够让人们参与进来，并随着时间的推移创造出有意义的互动。
+4.  **发帖参与度（Post Engagement）：** 人们在Facebook页面上与他人的互动次数，可以是任何形式的互动，从点赞到评论，再到分享。
+5.  **页面喜欢（Page Likes）：** 人们希望看到你的促销活动、产品或在Facebook页面上发布的任何东西。
+6.  **事件响应（Event Responses）：** 有兴趣或打算支持Facebook事件的人数。
+7.  **流量（Traffic）：** 访问网站、Facebook页面或点击链接的访客数量。
+8.  **潜在客户数（Lead Generation）：**
+     增加未来销售的潜在客户的数量
+9.  **转化（Conversion）**：客户完成了订购，贡献了销售额
+
+![这是一个转化的过程](https://image.deepnomind.com/blog/image/356e7f941c3253a97bf4bac628c5404e)
+
+# 目标客户群(标准)
+
+1.  **位置（Location）：** 可以选择在特定国家或特定城镇的特定半径内显示广告，可以点选想要的地区。
+2.  **年龄（Age）：** 对于B2B客户来说，他们不太可能将目标用户锁定在21岁以下的用户，因此这是一个很好的特性。此外，还可以针对不同的受众，或根据产品特性，针对多个年龄范围。
+3.  **性别（Gender）：** 可以瞄准特定性别的人群，专注于核心用户，这个功能是为性别导向的产品设计的。
+4.  **详细目标（Detailed Targeting）：** 这一功能是针对特定的兴趣，行为和人口统计数据，在Facebook用户数据中打过特殊的标签，从而可以将潜在受众最大化。
+5.  **联系（Connections）：** 这个功能是针对那些没有联系你，或者与你有联系的人。这样做的目的是为了从现有的粉丝那里获得更多的信息从而获得更多新用户。
+6.  **语言（Languages）：** 该特性根据用户设置的语言来定位用户。使用特定语言的人群有自己的文化，你的产品也许正好可以迎合这一人群。
+7.  **放置（Placements）：** 这是为了最大化你的预算，通过多个网页向尽可能多的用户展示你的广告，或者可以选择特定网页来展示广告。
+8.  **活动设置（Campaign settings）：** 用来决定你的活动的每日预算。
+9.  **预算（Budget）：** 总体预算或者每日预算的选择。
+10.  **投标（Bidding）：** 设置最低成本。
+11.  **创意（Creatives）：** 使用各种图片、视频和动态gif来吸引用户的注意。
+
+* * *
+
+![](https://image.deepnomind.com/blog/image/bf0637f34b4b70f7b6c657133d16c16c)
+
+广告的KPI评估主要集中在三个方面：
+
+1.  广告效果(基础、表现、品牌)
+2.  成本效益(成本，广告印象次数)
+3.  受众(广告点击次数)
+
+# 基础指标
+
+1.  **CPM（Cost per Mile or cost per thousand impressions）** — 对应广告被显示1000次的价格
+2.  **CTR（Click-through rate）** — 广告的点击率，即广告点击率占广告展示次数的百分比
+3.  **CPC（Cost per click or cost per click-through）** — 点击一次广告对应的价格
+
+# 绩效指标
+
+1.  **点击次数（Clicks）** — 广告被有效点击的次数，分为总点击次数和排名点击次数。例如，同一用户在1小时内点击同一页面上的同一广告3次，系统会检测为1次点击。
+2.  **转化量（The number of Conversions）** — 包括注册数、激活数、创建数量等。注册用户数 = 点击广告或从App Store下载的用户数量。
+3.  **每操作成本（CPA，Cost per Action）** — 通过每个用户操作的成本来计算每个注册的成本。
+4.  **每用户成本（CPL，Cost per Lead）** — 获取每个潜在客户的成本(获取潜在客户信息的价格)
+5.  **点击率（CVR，Click Value Rate）** — 广告的点击率 = 广告的转化率占广告总点击率的百分比
+6.  **召回率（Recall Rate）** — 通过广告召回的老用户数量
+
+# 广告指标
+
+1.  **ROI(Return on Investment=recovery value/cost，投资回报=回收价值/成本)** — 广告主在特定时期内通过广告回收的价值与广告投资的比率
+2.  **留存用户（Retained Users）** — 在一段时间内重新登录的用户数
+3.  **活跃用户数** — 在一定时间段内通过广告注册的用户数
+4.  **付费用户数量** — 成功付费的用户数
+5.  **支付金额** — 用户成功支付的总金额
+6.  **日活用户（DAU，Daily active user）** — 每天通过广告成功注册的用户数
+7.  **周活用户（WAU，Weekly active user）** — 一个自然周内通过广告成功注册的用户数
+8.  **月活用户（MAU，Monthly active user）** — 一个自然月内通过广告成功注册的用户数
+9.  **每用户平均收益（ARPU，Average revenue per user）** — 在一定时间内活跃用户的平均付费金额
+10.  **每付费用户平均收益（ARPPU，Average revenue per paying user）** — 在一定时间内付费用户的平均付费金额
+11.  **留存率** — 在一定时间内，用户留存数与注册用户数之比
+12.  **活跃率** — 在一定时间内，活跃用户数与注册用户数之比
+13.  **付费率** — 在一定时间内，付费用户数与注册用户数之比
+14.  **留存成本** — 用户获取成本/留存用户数
+15.  **活跃成本** — 广告成本/活跃用户数
+16.  **付费成本** — 广告成本/付费用户数
+17.  **终身价值（LTV，Lifetime value）** — 在统计期间的总付费金额/注册用户数
+
+# 品牌指标
+
+1.  **广告可见度（Viewability of advertisements）** — 广告在窗口可见区域的曝光率与广告总曝光率之比
+2.  **对目标受众的广告可见度（The viewability target audience of an advertisement）** — 目标受众与广告所触达人口的比例
+3.  **对目标受众的可见度 + 触达** — 1 + Reach, 2 + Reach, 3 + Reach前提下的曝光可见度
+4.  **独立访问者数量(UV数量)** — 客户端-服务器在一段时间内访问页面的总数量
+5.  **跳出率（Bounce Rate）** — 浏览完登陆页面后离开的访问量与总访问量的比率（衡量页面对用户有多大吸引力）
+6.  **频率（Frequency）** — 品牌广告的每一波展示通常都需要控制频率，以提高展示的有效性
+7.  **二次点击率** — 浏览登录页面后，页面的第一次有效点击次数与页面的访问次数（衡量用户访问质量或页面对用户的吸引力）
+8.  **每独立访问者成本（CPUV，Cost per unique visitors）** — 广告成本/UV数量
+9.  **每次参与成本或每次参与访问成本（CPE，Cost per engagement or CPEV，cost per engaged visit）** — 获得用户交互行为的成本
+10.  **每小时成本（CPH，Cost per hour）** — 观众每小时观看/与广告互动的成本
+11.  **用户参与度（Engagement Rate）** — 衡量广告服务期间用户与创意网页的互动和参与度(点击、分享、购买和网站内搜索)。
+12.  **召回率（Recall Rate）** — 一段时间内看到广告并在各种平台上搜索与广告相关关键字的用户比例(衡量品牌知名度的指标)
+13.  **品牌安全（Brand Safety）** — 过滤敏感词或非法关键词
+14.  **反欺诈（Anti-Fraud）**
+15.  **无效流量（Invalid Traffic）**
+16.  **第三方监测差异（Third-party monitoring discrepancy）**
+
+* * *
+
+# 活动预算优化（CBO，Campaign budget optimization）
+
+![](https://image.deepnomind.com/blog/image/9342171a6507372b243fea46264e2bfc)
+
+活动预算指的是在活动级别（高于广告组级别）设置的预算。例如，可以为活动运行的每一天或整个运行期间设置预算金额。活动预算优化系统将自动为广告组实时、持续的寻找最佳广告机会。
+
+* * *
+
+数字广告已经成为许多零售公司非常重要的营销策略。谷歌，Facebook, Instagram, Snapchat和Youtube这些知名公司都在如何吸引人们的注意力上投入了大量资金。与那些传统的广告技术不同，数字广告提供了更好的广告性能。他们都构建了强大的广告引擎，那么广告引擎是什么？
+
+# 功能性需求
+
+1.  购买广告媒体
+2.  索取广告资料
+3.  可以要求在媒体的不同位置放置广告
+4.  提供多种活动选择
+5.  允许出价/购买
+6.  收集用户个人信息
+7.  向用户发送定向广告
+8.  接收并处理广告客户的订单请求
+9.  为广告商提供KPI仪表盘
+10.  允许用户点击后通过网页支付
+11.  提供付款证明
+12.  将统计报告发送给广告商
+
+# 非功能性需求
+
+1.  一致性
+2.  持久性
+3.  可靠性
+4.  低延时
+
+* * *
+
+# 约束条件
+
+1.  频率：平台不能向用户发送过多广告，以免影响用户体验，这涉及到一系列的算法。
+2.  响应时间：广告客户需要更快的响应时间
+3.  质量：广告引擎必须满足用户和广告商的需求
+
+* * *
+
+Facebook和谷歌的广告系统可能还会有更多的改进，以满足特定需求。该系统首先从广告商那里收集广告信息，然后根据频率和预测建立广告指标。另一项目标服务将根据广告主设定的标准对用户进行分组。正如你所感受到的，广告是广告主和用户之间的互动。广告服务器请求排名服务对广告进行评分，并为用户当前的广告请求找到最合适的广告。一旦用户完成与广告的互动，不管是跳过它还是点击它，系统都将收集指标以及KPI，并将其发送给广告商。这些收集器背后的数据管道将历史事件聚合成更有价值的实时统计数据和业务日志。有了这些数据，广告服务器和频率服务可以提高广告传递的性能。业务日志将用于库存预测和计费。
+
+# 概要设计
+
+![](https://image.deepnomind.com/blog/image/a78d2935bd3cc1bf53c3a094903439e5)
+
+## Ad-Ranking服务
+
+*   为用户选择一个广告
+*   综合考虑用户的兴趣、过去的记录、他/她使用的标签和广告历史表现，提供最佳相关的广告
+*   利用稀疏逻辑回归和梯度推进决策树构建机器学习管道
+
+![](https://image.deepnomind.com/blog/image/22a49b2f9d66555a41a67cf364c3e658)
+
+* * *
+
+# 参考文档
+
+Facebook Ads: The Complete, Always-Updated Guide: https://buffer.com/library/facebook-ads-guide/  
+Facebook Ad Hacks: https://www.facebook.com/groups/557604277731548/?ref=bookmarks  
+The 28 Advertising KPIs That Every Marketer Should Be Tracking: https://databox.com/most-important-advertising-kpis  
+How Do First- and Second-Price Auctions Work in Online Ads? https://clearcode.cc/blog/first-price-second-price-auction/  
+Demand-Side Platforms Shaping the Future of Advertising: https://www.matchcraft.com/knowledge-center/industry-updates/508-demand-side-platforms-shaping-the-future-of-advertising  
+Introduction to Algorithmic Marketing: Artificial Intelligence for Marketing Operations: https://www.amazon.com/Introduction-Algorithmic-Marketing-Artificial-Intelligence/dp/0692989048  
+Meet Michelangelo: Uber's Machine Learning Platform: https://eng.uber.com/michelangelo-machine-learning-platform/  
+Generalized second-price auction: https://en.wikipedia.org/wiki/Generalized_second-price_auction  
+Architecture of a generic online real-time advertising platform: https://www.linkedin.com/pulse/architecture-generic-online-real-time-advertising-platform-ali-dasdan/  
+Advertising System Architecture: How to Build a Production Ad Platform: https://khamdb.com/ad-tech/advertising-system-architecture-how-to-build-a-production-ad-platform/  
+Building Twitter's ad platform architecture for the future: https://blog.twitter.com/engineering/en_us/topics/infrastructure/2020/building-twitters-ad-platform-architecture-for-the-future  
+Building advertising platforms (overview): https://cloud.google.com/architecture/infrastructure-options-for-building-advertising-platforms  
+Google AdWords' New Ad Rank Formula: What You Need to Know: https://blog.hubspot.com/marketing/adwords-ad-rank-formula-what-to-know-ht#:~:text=What%20Is%20Ad%20Rank%3F,when%20someone%20clicks%20the%20ad  
+What the New AdWords Ad Rank Algorithm Really Means: https://www.wordstream.com/blog/ws/2013/10/24/adwords-ad-rank-algorithm  
+Guide to Google Quality Score and How It Impacts Ad Rank: https://blog.milestoneinternet.com/paid-media/ad-rank-analysis-and-management/  
+Google Ads algorithm - How do Google ads work: https://www.optimizesmart.com/complete-guide-to-google-adwords-analytics/
+
+> 你好，我是俞凡，在Motorola做过研发，现在在Mavenir做技术工作，对通信、网络、后端架构、云原生、DevOps、CICD、区块链、AI等技术始终保持着浓厚的兴趣，平时喜欢阅读、思考，相信持续学习、终身成长，欢迎一起交流学习。  
+> 微信公众号：DeepNoMind
