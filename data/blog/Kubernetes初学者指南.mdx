@@ -1,0 +1,348 @@
+---
+title: 'Kubernetes初学者指南'
+date: '2022-02-05'
+tags: ['云原生']
+draft: false
+summary: 'Kubenetes是当前容器编排的事实标准，每个基于容器开发应用的工程师/架构师都应该了解Kubenetes的基本概念，这篇文章介绍了K8S最核心的一组概念，可以帮助初学者迈入K8S的大门。'
+---
+
+> _Kubenetes是当前容器编排的事实标准，每个基于容器开发应用的工程师/架构师都应该了解Kubenetes的基本概念，这篇文章介绍了K8S最核心的一组概念，可以帮助初学者迈入K8S的大门。原文：[Just-in-Time Kubernetes: A Beginner’s Guide to Understanding Kubernetes Core Concepts](https://medium.com/dzerolabs/just-in-time-kubernetes-a-beginners-guide-to-kubernetes-core-concepts-19ee7acbafa1)_
+
+![在西多伦多铁路路上发现的一只蜗牛。图片由Dzero Labs提供](https://image.deepnomind.com/blog/image/c3bc0db981be20a1ccb6a1f8d87ab27d)
+
+# 房间里的大象
+
+你可能会想要学一点Kubernetes的知识，现在几乎每个人都在谈论这项技术，有很多关于Kubernetes的工作机会。Kubernetes现在绝对是街上最靓的仔！
+
+你也许……
+
+*   听说过Kubernetes，并最终决定看看这玩意儿到底是什么。
+*   是一位经验丰富的软件工程师，已经用过一段时间Kubernetes。也就是说，你已经了解了完成工作所需要的东西。不过，你觉得越来越陷入乱七八糟的各种细节中，所以决定是时候系统的掌握一些基本知识了。（嘘……我不会告诉别人的，因为我自己也经历过！）
+*   是一位技术领导者，领导的团队正在研究Kubernetes（或者你的团队需要与另一个基于Kubernetes工作的团队合作），你想自学一些Kubernetes的知识。
+
+欢迎光临！很高兴见到你！
+
+我的目的是尽量简单的为你构建起学习和理解Kubernetes的基本模块。Kubernetes看起来很大很吓人，让我们面对现实吧，任何新技术都是可怕的。有太多东西要学，有如此多的细微差别，尤其是从零开始的时候。你害怕了吗？😱
+
+不用害怕，我会给你提供引导，向你展示Kubernetes并不是那么可怕，并激励你进一步拓展知识。如果你已经做了一段时间跟Kubernetes相关的工作，也可以顺便复习一下！也许你一直以某种方式做事，想当然的以为“事情就是这样的”；或者也许你遇到“啊哈!”时刻，更深入的了解事物为什么这样运作。
+
+我们开始吧！
+
+# 概述
+
+在这篇文章中，我将涵盖以下主题：
+
+1.  什么是Kubernetes？
+2.  顶层设计：Kubernetes架构
+3.  深入挖掘：资源（Resources）、控制器（Controllers）和操作器（Operators）
+4.  用于与Kubernetes交互的`kubectl`命令行工具
+
+如果你对某些方面感兴趣，请直接跳到感兴趣的话题。我不介意！😊
+
+> **注意：** 假设你对容器有基本的了解。
+
+## 什么是Kubernetes？
+
+重要的事情先说……Kubernetes到底是什么东西？Kubernetes是一个容器编排系统，允许我们部署、扩展和管理容器化的应用程序。因为软件工程师都很懒，所以它也被缩写为k8s。如果你曾经看到过“k8s”这个术语，并一直想知道它是什么，现在你知道了！
+
+> **有趣的事实：** Kubernetes的起源可以追溯到最初由谷歌开发的Borg项目。
+
+![图片来源：memegenerator.net](https://image.deepnomind.com/blog/image/ada055e272ce2afe6e48788edcf0cd16)
+
+现在，你可能想知道到底什么是容器业务流程。我们看一个例子。
+
+假设你的服务器上有一堆Docker容器在运行，这些容器之间也许需要互相通信，或者你的朋友Nancy正在尝试访问运行在这些容器中的某个API端点。那么如何确保容器之间能够相互通信呢？或者如何确保Nancy能够安全的访问API端点？如果其中一个容器坏了怎么办？如果突然间不仅仅Nancy需要访问API，而是Nancy和她所有的开发朋友由于参加一场黑客马拉松，都需要访问这个API，因此需要对容器进行扩容，怎么办？
+
+这就是使用容器编排的原因，它可以帮我们做到这一切，甚至做的更多。[容器编排](https://pvillela.com/2021/containers-kubernetes-and-service-mesh-in-a-nutshell/)被定义为：定义、部署和操作由多个虚拟机或物理服务器组成的计算集群的能力，以启动容器并管理它们的生命周期。
+
+## Kubernetes的竞争对手
+
+虽然Kubernetes又酷又流行，但你可能会惊讶的发现，它并不是唯一的容器编排器！事实确实如此，我们可以列举几个Kubernetes的竞争对手：
+
+*   [Docker Swarm](https://docs.docker.com/engine/swarm/)
+*   [Marathon](https://www.sumologic.com/blog/container-orchestration-mesos-marathon/)
+*   [Amazon ECS](https://aws.amazon.com/ecs/?whats-new-cards.sort-by=item.additionalFields.postDateTime&whats-new-cards.sort-order=desc&ecs-blogs.sort-by=item.additionalFields.createdDate&ecs-blogs.sort-order=desc)
+*   [Azure Service Fabric](https://azure.microsoft.com/en-ca/services/service-fabric/)
+*   [Hashicorp Nomad](https://www.nomadproject.io/)
+
+# 不同口味的Kubernetes
+
+![Kubernetes推出的一些口味——太好吃了!](https://image.deepnomind.com/blog/image/88d16040a762287006177759ef0c3e3d)
+
+
+虽然不像冰淇淋口味那样令人兴奋，但值得一提的是，Kubernetes有几种不同的运行方式。
+
+## 本地
+
+首先，借助于下面的工具，可以在本地机器上运行Kubernetes：
+
+*   [KIND](https://kind.sigs.k8s.io/)（**K**ubernetes **in** **D**ocker的缩写）
+*   [Docker Desktop](https://www.docker.com/products/kubernetes)（是的，它自带Kubernetes，可以在本地运行）
+*   [Minikube](https://minikube.sigs.k8s.io/docs/start/)
+
+## 云服务商的解决方案
+
+在本地运行k8s对于应用程序开发和本地测试都很有帮助，但是我们最终需要在生产环境中运行，并且是规模化运行。这就是为什么大多数主要的云服务商都有自己的k8s。包括：
+
+*   [Google Kubernetes Engine（GKE）](https://cloud.google.com/kubernetes-engine)
+*   [Amazon Elastic Kubernetes Service（EKS）](https://aws.amazon.com/eks/?whats-new-cards.sort-by=item.additionalFields.postDateTime&whats-new-cards.sort-order=desc&eks-blogs.sort-by=item.additionalFields.createdDate&eks-blogs.sort-order=desc)
+*   [Azure Kubernetes Service（AKS）](https://docs.microsoft.com/en-us/azure/aks/)
+
+每个云服务商通常都有一个小巧漂亮的CLI命令集，用于在该云中自动创建k8s集群。发出CLI命令就可以在5-10分钟内启动整个集群，这是一种非常神奇的体验。我们所说的不仅是按需启动虚拟机，还包括启动所有让k8s运转的服务。如果你想到这一点，无疑是超级令人印象深刻的！
+
+它们还提供了一些基本的k8s GUI，不过没啥特别的。
+
+## 企业级解决方案
+
+对于那些喜欢漂亮的管理GUI，喜欢把手插在兜里（没有批评的意思，这类东西实际上有巨大的市场）的人，为了满足他们的企业级需求，可以看看以下这些供应商：
+
+*   [RedHat OpenShift](https://www.redhat.com/en/engage/container-platform-datasheet-20170814?sc%5C_cid=7013a0000026GNBAA2&gclsrc=ds&gclsrc=ds)
+*   [VMWare Tanzu](https://tanzu.vmware.com/tanzu?utm%5C_source=google&utm%5C_medium=cpc&utm%5C_campaign=amer%5C_gp-b%5C_a2&utm%5C_content=g2%5C_t023&utm%5C_term=vmware%20tanzu&%5C_bt=498180106968&%5C_bk=vmware%20tanzu&%5C_bm=e&%5C_bn=g&%5C_bg=119184092313)
+*   [Rancher](https://rancher.com/)
+
+这些工具倾向于在Kubernetes的基础上增加一个管理层，以满足企业群体的需求。就像我之前提到的，它们往往拥有出色的管理控制台，也倾向于通过各自的“应用市场”提供大量插件，并可能有自以为是的k8s实现（例如服务网格选择）。这些供应商允许我们在公有云或自托管的私有云中运行他们的k8s集群。
+
+## DIY
+
+最后，如果不怕麻烦的话，可以[从头创建自己的k8s集群](https://github.com/kelseyhightower/kubernetes-the-hard-way)。虽然我个人不太喜欢这么做，但如果你真的想了解Kubernetes是如何工作的，这绝对是一个很好的方式！
+
+# Kubernetes组件
+
+现在我们有了一点关于Kubernetes的背景知识，让我们来看看它背后有什么。
+
+![Kubernetes的master和worker (minion)节点](https://image.deepnomind.com/blog/image/2607bbb9897c661501c551c5032be776)
+
+Kubernetes集群由节点组成，这些节点可以是物理机，也可以是虚拟机。我们可以部署拥有一个或多个节点的集群，但理想情况下，在非开发场景中至少需要两个节点。
+
+集群通常有一个主节点和一组工作节点（或随从节点）。
+
+> **注意：** 这就是为什么需要至少两个节点的原因，在非开发环境中，一个节点同时充当主节点和工作节点的单节点集群会遇到很多问题。
+
+主节点负责监视工作节点并执行业务流程（想想管理员的工作），工作节点负责运行容器。
+
+下图显示了主节点和工作节点的内部情况：
+
+![Kubernetes组件。图片来源：kubernetes.io](https://image.deepnomind.com/blog/image/96f60af6d963728747161f60bbbabcd3)
+
+## 主节点（Master Node）
+
+作为所有操作的管理者，主节点包含以下几个组件：
+
+*   etcd
+*   API服务器
+*   控制器管理器
+*   调度器
+
+让我们深入研究一下。
+
+### etcd
+
+[etcd](https://etcd.io/)是一个分布式键值数据库，储存了Kubernetes当前以及过去的所有状态。每次修改Kubernetes的时候（无论是通过k8s的REST API发送YAML或者JSON，还是通过`kubectl` CLI工具（稍后会详细介绍）），修改都会以JSON形式存储在etcd中。它也是版本控制的，所以还需要进行一些严格的版本控制操作。
+
+etcd的一个关键特性是关注变化，也就是说，它检查系统中当前配置的内容，跟踪通过REST API调用或`kubectl`发送到Kubernetes的任何变更。
+
+> **Nerd alert：** 个人认为etcd是Kubernetes最酷的组件之一。实际上，可以在本地机器（例如[OSX](https://brewinstall.org/install-etcd-on-mac-with-brew/)和[Ubuntu](https://computingforgeeks.com/how-to-install-etcd-on-ubuntu-18-04-ubuntu-16-04/)）上安装etcd，并通过[`etcdctl`](https://etcd.io/docs/v3.4/dev-guide/interacting%5C_v3/) CLI工具来使用。Python甚至有一些用于以编程方式与etcd交互的库，我个人已经玩过[Python etcd3库](https://pypi.org/project/etcd3/)，强烈建议你自己探索一下etcd！
+
+### API服务器
+
+API服务器负责提供Kubernetes API。想跟Kubernetes通信，让它为你做事吗？无论是用户、程序还是`kubectl`，这都是最直接的方式。API服务器还负责向etcd发送数据以及从etcd提取数据。
+
+### 控制器管理器
+
+控制器管理器是业务流程背后的大脑。Kubernetes有多个控制器，每个控制器自责不一。控制器监视集群状态，在需要的地方变更或请求更改。控制器管理器确保让正确的控制器做正确的事情。例如，有以下控制器：
+
+*   当pod关闭时采取行动
+*   将服务连接到pod
+*   创建帐户和访问API令牌
+
+还有许多其他的控制器……
+
+> **注意：** 也许你想知道pod是什么，简单来说，它是一个包装器，封装了一个或多个容器。
+
+### 调度器
+
+调度器跨多个节点分配工作，通过查看资源需求（例如CPU和内存需求）来确定何时运行pod，以及在哪个节点上运行。
+
+## 工作节点（Worker Node）
+
+显然，主节点做了很多工作，但就像管理器一样，没有工作节点它什么也做不了。工作节点包含两个主要组件：
+
+*   Kubelet
+*   Kube-proxy
+
+### Kubelet
+
+kubelet是一个运行在集群中每个工作节点上的代理（小应用程序），主要工作是确保容器运行在一个pod（一个或多个容器的包装器）中。但谁让它运行这些容器？由控制面（我们的好朋友控制器管理器所在的位置）决定。当控制面需要在一个节点中做点什么时，kubelet就会帮它完成。
+
+kubelet运行容器运行时，顾名思义，它负责实际运行容器。更具体地说，它管理一个容器的完整生命周期：拉取容器镜像（从容器仓库拉取，如[Docker Hub](https://hub.docker.com/)）、存储容器镜像、运行容器、加载网络，等等。[Docker](https://www.docker.com/)是流行的容器运行时，不过还有其他容器运行时，如[containerd](https://containerd.io/), [CRI-O](https://cri-o.io/)。
+
+> **注意：** Kubernetes目前使用Docker容器运行时，不过，不久的将来它将弃用Docker，转而支持[Kubernetes CRI（Container Runtime Interface）](https://kubernetes.io/blog/2016/12/container-runtime-interface-cri-in-kubernetes/)的运行时。docker生成的映像还是可以在所有运行时中继续在集群中工作，所以不必惊慌！
+
+### Kube-proxy
+
+kube-proxy处理集群内外的网络通信，如果pod需要彼此通信，或者某个外部服务需要与pod通信，kube-proxy会帮助实现这一点。
+
+## 资源（Resources）、控制器（Controllers）和操作器（Operators）
+
+现在我们已经理解了Kubernetes组件的基础知识，接下来我们来了解一些其他关键的Kubernetes概念和术语。
+
+### 资源（Resources）
+
+[Kubernetes资源](https://kubernetes.io/docs/reference/using-api/api-concepts/)指的是Kubernetes中的对象或操作，可以通过Kubernetes API访问。资源类型被表示为名为 ***kind*** 的JSON对象，这个JSON对象存储在我们的好朋友etcd中（并且有版本管理）。
+
+有两种类型的资源：原始资源和自定义资源。Kubernetes的原始资源是“开箱即用”的，包括`Pod`、`Service`、`Deployment`、`ServiceAccount`、`PersistentVolumeClaim`、`RoleBinding`、等等。
+
+Kubernetes中原始资源示例：
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pipeline-sa
+secrets:
+  - name: basic-docker-user-pass
+  - name: basic-git-app-repo-user-pass
+```
+
+自定义资源是Kubernetes API的扩展，因此在Kubernetes的默认安装中不一定可用。安装之后，您可以使用`kubectl` CLI工具来创建和访问这些资源（稍后将详细介绍`kubectl`）。当我们想要Kubernetes做一些不是原生支持的事情时，就会创建自定义资源。
+
+下面是一个自定义资源的例子：
+
+```yaml
+apiVersion: tekton.dev/v1alpha1
+kind: PipelineRun
+metadata:
+  generateName: my-pipeline-run-
+spec:
+  serviceAccountName: pipeline-sa
+  pipelineRef:
+    name: my-pipeline
+  resources:
+  - name: git-app-repo
+    resourceRef:
+      name: git-app-repo
+  - name: image-registry
+    resourceRef:
+      name: image-registry
+```
+
+你也许已经注意到，在大多数情况下，原始资源和自定义资源都有相同的主字段：
+
+*   `apiVersion`：用来创建资源的Kubernetes API的版本
+*   `kind`：要创建的资源类型
+*   `metadata`：唯一标识资源的数据
+*   `spec`：告诉Kubernetes资源的期望状态
+
+> **注意：** 不是所有资源都有`spec`字段（例如`ServiceAccount`、`Role`、`RoleBinding`）。
+
+### 控制器（Controllers）
+
+如前所述，控制器监视集群状态，然后在需要时进行变更或请求更改，以达到所需的状态。等等等等。但这到底意味着什么呢？
+
+我们举个有趣的例子。假设你是游泳池的救生员，工作是保证泳池里所有人的安全。要做到这一点，你必须不断扫描游泳池，以确保没有游泳者处于困境，这就是所期望的状态。因此，如果你看到有人溺水，需要去把他们从水里拉出来，并执行任何其他必要的救生任务，以确保他们不再处于困境。
+
+### 操作器（Operators）
+
+操作器是控制器的一种类型。还记得我前面提到的那些自定义资源吗？定义一个自定义资源是不错，但最后我们怎么让Kubernetes做一些有用的事情呢？这就是操作器的作用，它们是后台代码，帮助这些自定义资源可以完成一些有用的事情。
+
+虽然所有操作器都是控制器，但并非所有控制器都是操作器。这可能相当令人困惑，因为从一开始，它们似乎是相同的东西。主要的区别是操作器与自定义资源一起工作，扩展了Kubernetes的功能。
+
+> **有趣的事实：** 操作器可以用任何语言编写，并且有一些框架可以设置一些样板代码来帮助我们编写自己的操作器。
+
+任何人都可以创建操作器：你、你的组织或外部供应商。例如，RedHat OpenShift有自己的一组操作器（以及相应的自定义资源），这是其核心产品的一部分，运行在普通Kubernetes上。多亏了出色的开源社区，有许多操作器被共享了出来，可以在[OperatorHub.io](https://operatorhub.io/)上查看其中的一部分。
+
+### kubectl
+
+我在这篇文章中已经谈论了很多关于`kubectl`的内容，现在我们终于可以详细看一下这个组件了！`kubectl`是一个用于管理Kubernetes集群操作的命令行接口，与我们的好朋友API服务器通信，以获取关于集群的信息，并告诉Kubernetes需要做些什么事情（比如创建一个新资源，或修改一个现有的资源）。正如我之前提到的，当我们使用操作器和自定义资源定义（CRD）的神奇组合来扩展Kubernetes API时，也可以使用`kubectl`来访问/更新这些资源！
+
+由于`kubectl`是一个命令行工具，所以可以在本地机器上运行。它与`kubecconfig`文件一起工作，`kubecconfig`是一个YAML文件，默认安装在`$HOME/.kube/config`中。下面是`kubecconfig`文件示例：
+
+```yaml
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: <redacted>
+    server: https://192.168.0.1
+  name: my_cluster
+contexts:
+- context:
+    cluster: my_cluster
+    user: my_cluster
+  name: my_cluster
+current-context: my_cluster
+kind: Config
+preferences: {}
+users:
+- name: my_cluster
+  user:
+    auth-provider:
+      config:
+        access-token: <redacted>
+        cmd-args: config config-helper -- format=json
+        cmd-path: /some/path/here
+        expiry: "2021-03-23T16:26:53Z"
+        expiry-key: '{.credential.token_expiry}'
+        token-key: '{.credential.access_token}'
+      name: azure
+```
+
+你不需要试图理解这堆乱糟糟的东西，当我们连接到现有的Kubernetes集群时，`kubecconfig`文件中的条目是自动生成的。
+
+例如，如果我想连接到Azure Kubernetes集群，可以使用Azure的az CLI来运行如下命令：
+
+```bash
+az aks get-credentials --resource-group my-resource-group --name my-aks-cluster
+```
+
+这条命令会为我创建`kubecconfig`文件。很神奇！
+
+类似的，可以使用GCP的gcloud CLI连接到谷歌Kubernetes集群，如下所示：
+
+```bash
+gcloud container clusters get-credentials my-gke-cluster --region=us-central1-a
+```
+
+关键是，每个云服务商都有自己的云CLI和命令集，用于连接到该云中的Kubernetes集群，并相应的更新`kubecconfig`文件。
+
+一旦在`kubecconfig`文件中注册了该集群，就可以对集群运行各种命令，还可以使用`kubectl`来了解当前注册的集群，并更新单个集群的配置。
+
+> **注意：** 完全可以在同一个`kubecconfig`文件中注册来自不同云的多个Kubernetes集群。或者，如果你喜欢的话，也可以有多个`kubecconfig`文件。
+
+如果你有兴趣了解更多关于kubectl和kubecconfig的信息，请参阅下面的***推荐阅读***部分。
+
+# 结论
+
+本文绝不是对Kubenetes的深入研究，相反，我的目标只是向你介绍Kubernetes的基本概念，让你了解Kubernetes的运行原理，并希望能激励你更深入挖掘这个人人都在谈论的值得关注的技术。
+
+你现在了解了一些Kubernetes的有趣的事实，下次如果有人问你关于Kubernetes，可以这样告诉他们：
+
+*   什么是Kubernetes？为什么要用它？
+*   主节点和工作节点的区别，以及每个节点的优点
+*   什么是资源？
+*   控制器和操作器的区别
+*   `kubectl`是干嘛的？
+
+现在，我要奖励你一张可爱小鸭子的照片。
+
+![图片来源：Oliva Colacicco @Unsplash](https://image.deepnomind.com/blog/image/e31583cb5836087617930a585c2bba41)
+
+Peace, love, and code.
+
+# 推荐阅读
+
+*   Don’t Panic: Kubernetes and Docker: https://kubernetes.io/blog/2020/12/02/dont-panic-kubernetes-and-docker/
+    
+*   Understanding Kubernetes Objects: https://kubernetes.io/docs/concepts/overview/working-with-objects/kubernetes-objects/
+    
+*   Kubernetes Architecture: https://www.redhat.com/en/topics/containers/kubernetes-architecture
+    
+*   Kubernetes Operators by Example: https://codeburst.io/kubernetes-operators-by-example-99a77ea4ac43
+    
+*   Mastering the KUBECONFIG File: https://medium.com/@ahmetb/mastering-kubeconfig-4e447aa32c75
+    
+*   Overview of kubectl: https://kubernetes.io/docs/reference/kubectl/overview/
+    
+*   Containers, Kubernetes, and Service Mesh in a Nutshell: https://pvillela.com/2021/containers-kubernetes-and-service-mesh-in-a-nutshell/
+
+> 你好，我是俞凡，在Motorola做过研发，现在在Mavenir做技术工作，对通信、网络、后端架构、云原生、DevOps、CICD、区块链、AI等技术始终保持着浓厚的兴趣，平时喜欢阅读、思考，相信持续学习、终身成长，欢迎一起交流学习。  
+> 微信公众号：DeepNoMind
