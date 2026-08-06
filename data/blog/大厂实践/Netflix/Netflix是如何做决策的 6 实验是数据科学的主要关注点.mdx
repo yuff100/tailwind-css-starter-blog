@@ -1,0 +1,157 @@
+---
+title: 'Netflix是如何做决策的? | 6. 实验是数据科学的主要关注点'
+date: '2022-03-20'
+tags: ['大厂实践','数据工程']
+draft: false
+summary: '这是Netflix关于实验和决策的系列文章，系统介绍了实验对于Netflix的重要性，实验的最主要工具--A/B测试，数据科学和文化在实验与决策过程中的重要性等。整个系列共七篇文章，这是第六篇。'
+---
+
+> _这是Netflix关于实验和决策的系列文章，系统介绍了实验对于Netflix的重要性，实验的最主要工具--A/B测试，数据科学和文化在实验与决策过程中的重要性等。整个系列共七篇文章，这是第六篇。原文：[Experimentation is a major focus of Data Science across Netflix](https://netflixtechblog.com/experimentation-is-a-major-focus-of-data-science-across-netflix-f67923f8e985)_
+
+1.  [Netflix的决策制定](https://www.deepnomind.com/blog/%E5%A4%A7%E5%8E%82%E5%AE%9E%E8%B7%B5/Netflix/Netflix%E6%98%AF%E5%A6%82%E4%BD%95%E5%81%9A%E5%86%B3%E7%AD%96%E7%9A%84%201%20Netflix%E7%9A%84%E5%86%B3%E7%AD%96%E5%88%B6%E5%AE%9A)
+2.  [什么是A/B测试？](https://www.deepnomind.com/blog/%E5%A4%A7%E5%8E%82%E5%AE%9E%E8%B7%B5/Netflix/Netflix%E6%98%AF%E5%A6%82%E4%BD%95%E5%81%9A%E5%86%B3%E7%AD%96%E7%9A%84%202%20%E4%BB%80%E4%B9%88%E6%98%AFAB%E6%B5%8B%E8%AF%95)
+3.  [A/B测试结果之假阳性和统计显著性](https://www.deepnomind.com/blog/%E5%A4%A7%E5%8E%82%E5%AE%9E%E8%B7%B5/Netflix/Netflix%E6%98%AF%E5%A6%82%E4%BD%95%E5%81%9A%E5%86%B3%E7%AD%96%E7%9A%84%203%20AB%E6%B5%8B%E8%AF%95%E7%BB%93%E6%9E%9C%E4%B9%8B%E5%81%87%E9%98%B3%E6%80%A7%E5%92%8C%E6%98%BE%E8%91%97%E6%80%A7%E7%BB%9F%E8%AE%A1)
+4.  [A/B测试结果之假阴性和统计功效](https://www.deepnomind.com/blog/%E5%A4%A7%E5%8E%82%E5%AE%9E%E8%B7%B5/Netflix/Netflix%E6%98%AF%E5%A6%82%E4%BD%95%E5%81%9A%E5%86%B3%E7%AD%96%E7%9A%84%204%20AB%E6%B5%8B%E8%AF%95%E7%BB%93%E6%9E%9C%E4%B9%8B%E5%81%87%E9%98%B4%E6%80%A7%E5%92%8C%E7%BB%9F%E8%AE%A1%E5%8A%9F%E6%95%88)
+5.  [在做决定时建立信心](https://www.deepnomind.com/blog/%E5%A4%A7%E5%8E%82%E5%AE%9E%E8%B7%B5/Netflix/Netflix%E6%98%AF%E5%A6%82%E4%BD%95%E5%81%9A%E5%86%B3%E7%AD%96%E7%9A%84%205%20%E5%9C%A8%E5%81%9A%E5%86%B3%E5%AE%9A%E6%97%B6%E5%BB%BA%E7%AB%8B%E4%BF%A1%E5%BF%83)
+6.  实验是数据科学的主要关注点👈
+7.  学习的文化
+
+_这个系列之前的几篇文章介绍了基本的A/B测试([第1部分](https://www.deepnomind.com/blog/%E5%A4%A7%E5%8E%82%E5%AE%9E%E8%B7%B5/Netflix/Netflix%E6%98%AF%E5%A6%82%E4%BD%95%E5%81%9A%E5%86%B3%E7%AD%96%E7%9A%84%201%20Netflix%E7%9A%84%E5%86%B3%E7%AD%96%E5%88%B6%E5%AE%9A)和[第2部分](https://www.deepnomind.com/blog/%E5%A4%A7%E5%8E%82%E5%AE%9E%E8%B7%B5/Netflix/Netflix%E6%98%AF%E5%A6%82%E4%BD%95%E5%81%9A%E5%86%B3%E7%AD%96%E7%9A%84%202%20%E4%BB%80%E4%B9%88%E6%98%AFAB%E6%B5%8B%E8%AF%95))，核心统计概念([第3部分](https://www.deepnomind.com/blog/%E5%A4%A7%E5%8E%82%E5%AE%9E%E8%B7%B5/Netflix/Netflix%E6%98%AF%E5%A6%82%E4%BD%95%E5%81%9A%E5%86%B3%E7%AD%96%E7%9A%84%203%20AB%E6%B5%8B%E8%AF%95%E7%BB%93%E6%9E%9C%E4%B9%8B%E5%81%87%E9%98%B3%E6%80%A7%E5%92%8C%E6%98%BE%E8%91%97%E6%80%A7%E7%BB%9F%E8%AE%A1)和[第4部分](https://www.deepnomind.com/blog/%E5%A4%A7%E5%8E%82%E5%AE%9E%E8%B7%B5/Netflix/Netflix%E6%98%AF%E5%A6%82%E4%BD%95%E5%81%9A%E5%86%B3%E7%AD%96%E7%9A%84%204%20AB%E6%B5%8B%E8%AF%95%E7%BB%93%E6%9E%9C%E4%B9%8B%E5%81%87%E9%98%B4%E6%80%A7%E5%92%8C%E7%BB%9F%E8%AE%A1%E5%8A%9F%E6%95%88))，以及如何建立基于A/B测试结果的信心([第5部分](https://www.deepnomind.com/blog/%E5%A4%A7%E5%8E%82%E5%AE%9E%E8%B7%B5/Netflix/Netflix%E6%98%AF%E5%A6%82%E4%BD%95%E5%81%9A%E5%86%B3%E7%AD%96%E7%9A%84%205%20%E5%9C%A8%E5%81%9A%E5%86%B3%E5%AE%9A%E6%97%B6%E5%BB%BA%E7%AB%8B%E4%BF%A1%E5%BF%83))。在这篇文章里，我们将描述在Netflix的规模较大的数据科学与工程组织中，实验和A/B测试扮演了怎样的角色，我们的平台投资如何支持在实现创新的同时进行大规模测试。本系列的最后一篇文章将讨论Netflix的实验文化的重要性。_
+
+实验和因果推理是Netflix数据科学和工程组织的主要重点领域之一。为了直接支持整个公司的重大决策，Netflix有许多数据科学团队，他们直接与产品经理、工程团队和其他业务部门合作，设计、执行和从实验中学习。为了实现可扩展性，我们已经构建并将继续投资于一个内部实验平台(简称XP)。我们有意鼓励集中实验平台和数据科学团队之间的合作，这些团队直接与Netflix的业务部门合作。
+
+> _想了解更多关于Netflix的其他数据科学和工程功能吗？要了解数据分析师和可视化工程，请参阅Molly Jackman和Meghana Reddy写的[《Analytics at Netflix: Who We Are and What We Do》](https://netflixtechblog.com/analytics-at-netflix-who-we-are-and-what-we-do-7d9c08fe6965)以及Julie Beckley和Chris Pham写的[《How Our Paths brings Us To Data and Netflix》](https://netflixtechblog.com/how-our-paths-brought-us-to-data-and-netflix-4eced44a6872)。想知道在Netflix做数据工程师是什么感觉吗？在“Data Engineers of Netflix”系列采访中，直接聆听[Samuel Setegne](https://netflixtechblog.medium.com/data-engineers-of-netflix-interview-with-samuel-setegne-f3027f58c2e2)、[Dhevi Rajendran](https://netflixtechblog.medium.com/data-engineers-of-netflix-interview-with-dhevi-rajendran-a9ab7c7b36e5)、[Kevin Wylie](https://netflixtechblog.com/data-engineers-of-netflix-interview-with-kevin-wylie-7fb9113a01ea)和[Pallavi Phadnis](https://netflixtechblog.com/data-engineers-of-netflix-interview-with-pallavi-phadnis-a1fcc5f64906)的观点。_
+
+直接与Netflix业务部门合作的实验和因果推理数据科学家对他们工作的业务领域有着深刻的领域理解和直觉，这些角色中的数据科学家运用科学的方法为当前和未来的会员改善Netflix的体验，并参与实验的整个生命周期：数据探索和构思、设计和执行测试、分析结果以帮助确定测试结果、从众多测试(和其他来源)中综合学习以理解会员行为、确定创新的机会领域。这是一个良性的、科学严谨的循环，基于一般原则(演绎法)的关于会员行为和偏好的特定假设，并从实验中归纳学习以建立我们对会员的概念理解(归纳法)。通过这一循环，成功的使我们能够在Netflix服务的各个方面迅速创新，并相信我们的决定得到了经验证据的支持，为我们的会员提供更多的快乐。
+
+> 想了解更多？看看Stephanie Lane、Wenjing Zheng和Mihir Tendulkar写的[《一个实验和因果推理科学家在Netflix的一天》](https://netflixtechblog.com/a-day-in-the-life-of-an-experimentation-and-causal-inference-scientist-netflix-388edfb77d21)。
+
+这些职位的成功需要广泛的技术技能，积极主动的态度，以及对该领域的好奇心。Netflix的数据科学家们在从数据中获取知识的过程中毫不间断的进行着探索，他们会不断走得更远，提出更多问题。“我们还能从这次测试中学到什么，以便为下次测试提供信息？”“我可以从去年的测试中总结出哪些信息，以便为明年的学习路线图确定机会大小？”“我还能给这个问题带来什么其他数据和直觉？”“根据我自己在Netflix上的经历，还有哪些机会可以测试和改进现有的体验？”我们期待数据科学家在实验的设计和分析上突破界限：考虑到产品特定部分的学习日程，哪些新方法或路径可能产生有价值的见解？这些数据科学家也被他们的商业伙伴视为值得信赖的思想合作伙伴，因为他们对我们的会员和Netflix的体验发展了深厚的领域专业知识。
+
+以下是Netflix几个实验领域的快速总结，以及每个领域的一些创新成果。这并不是一个详尽的列表，我们关注是通过实验学习提升会员体验的结果可能不太明显的那些领域。
+
+![图1:A/B测试贯穿整个Netflix，为当前和未来的成员提供更多的乐趣。](https://image.deepnomind.com/blog/image/eefa084f09c0cb472f4f4bbbe632fe49)
+
+# 增长广告（Growth Advertising）
+
+在Netflix，我们想要[为全世界提供娱乐](https://about.netflix.com/en)！我们的增长团队在社交媒体平台和其他网站上发布广告，分享即将推出的节目和新产品功能的新闻，最终目标是在全球范围内增加Netflix的会员数量。数据科学家在建立利用因果推理来决定我们如何花费广告预算的自动化系统中扮演着至关重要的角色。
+
+在广告方面，测试(我们购买的广告)直接体现为Netflix的成本。因此，我们在决策中是风险厌恶的，并积极降低购买那些不能有效吸引新会员的广告的可能性。在我们的领域中，因为实验通常具有较低的功效(见第4部分)，因此遵守这种风险规避是一项挑战。例如，我们依靠[差异中的差异(difference-in-differences)技术](https://netflixtechblog.com/key-challenges-with-quasi-experiments-at-netflix-89b4f234b852)，对每种广告触达的潜在受众的体验进行无差别比较，有效减少了样本量(有兴趣的读者可以了解[更多细节](https://www.msi.org/wp-content/uploads/2020/06/MSI_Report_15-122.pdf))。解决低功效问题的一种方法是简单的进行更长时间的实验——但这将放慢我们创新的整体步伐。
+
+接下来，我们将强调在该领域中进行实验的两个相关问题，并简要描述我们如何在保持高节奏实验的同时解决这些问题。
+
+回想一下，[第3部分](https://www.deepnomind.com/blog/%E5%A4%A7%E5%8E%82%E5%AE%9E%E8%B7%B5/Netflix/Netflix%E6%98%AF%E5%A6%82%E4%BD%95%E5%81%9A%E5%86%B3%E7%AD%96%E7%9A%84%203%20AB%E6%B5%8B%E8%AF%95%E7%BB%93%E6%9E%9C%E4%B9%8B%E5%81%87%E9%98%B3%E6%80%A7%E5%92%8C%E6%98%BE%E8%91%97%E6%80%A7%E7%BB%9F%E8%AE%A1)和[第4部分](https://www.deepnomind.com/blog/%E5%A4%A7%E5%8E%82%E5%AE%9E%E8%B7%B5/Netflix/Netflix%E6%98%AF%E5%A6%82%E4%BD%95%E5%81%9A%E5%86%B3%E7%AD%96%E7%9A%84%204%20AB%E6%B5%8B%E8%AF%95%E7%BB%93%E6%9E%9C%E4%B9%8B%E5%81%87%E9%98%B4%E6%80%A7%E5%92%8C%E7%BB%9F%E8%AE%A1%E5%8A%9F%E6%95%88)描述了两种类型的错误：假阳性(或第一类错误)和假阴性(第二类错误)。在实验功效较低的情况下，还有另外两种[错误类型](http://www.stat.columbia.edu/~gelman/research/published/retropower20.pdf)可能会以较高的概率发生，因此在根据统计显著性测试结果采取行动时，有必要考虑这两种错误类型：
+
+*   当我们观察到具有统计学意义的结果时，预估的度量值变化与事实相反，就会发生**S型错误（Type-S error）**。
+*   当我们观察到具有统计学意义的结果时，预估的度量值变化的大小相对于事实被放大(或夸大)，就会出现**M型错误（Type-M error）**。
+
+如果我们只是简单的宣布具有统计学意义的测试结果(带有正向的度量值变化)作为测试的结果，那么S型错误意味着我们实际上选择了**错误**的方法来推广产品，我们未来的所有广告支出都将产生次优结果。M型错误意味着我们**高估**了测试的影响。在短期内，M型错误意味着我们会夸大结果，而在长期内，可能会导致高估最佳预算水平，甚至错误的考虑未来的研究方向。
+
+为了减少这些错误的影响，我们采用[贝叶斯方法](https://drive.google.com/file/d/11vKsMl_U8aUbaj3_TQ6Ewdc3iD0Ytpq_/view)来测试增长型广告。我们已经在这一领域运行了许多测试，并使用来自过去测试的度量值变化的分布作为分析的附加输入。从直观上(和数学上)，这种方法导致预估的度量值变化幅度更小，具有更窄的置信区间([第3部分](https://www.deepnomind.com/blog/%E5%A4%A7%E5%8E%82%E5%AE%9E%E8%B7%B5/Netflix/Netflix%E6%98%AF%E5%A6%82%E4%BD%95%E5%81%9A%E5%86%B3%E7%AD%96%E7%9A%84%203%20AB%E6%B5%8B%E8%AF%95%E7%BB%93%E6%9E%9C%E4%B9%8B%E5%81%87%E9%98%B3%E6%80%A7%E5%92%8C%E6%98%BE%E8%91%97%E6%80%A7%E7%BB%9F%E8%AE%A1))。结合这两种效果，降低了S型和M型错误的风险。
+
+![](https://image.deepnomind.com/blog/image/9089a8c1012a1cbab9c56fe67fbe76b2)
+
+越早结束次优测试越好，我们也希望能够做出信息完备的、统计上有效的决定，以尽快结束实验。这是团队的一个活跃研究领域，我们研究了[组顺序测试（Group Sequential Testing）](https://netflixtechblog.com/improving-experimentation-efficiency-at-netflix-with-meta-analysis-and-optimal-stopping-d8ec290ae5be)和[贝叶斯推理（Bayesian Inference）](https://drive.google.com/file/d/11vKsMl_U8aUbaj3_TQ6Ewdc3iD0Ytpq_/view)作为判断结束测试的最佳方案（见下面关于这两种方法的更多信息）。当与[预期损失](https://cdn2.hubspot.net/hubfs/310840/VWO%5C_SmartStats%5C_technical%5C_whitepaper.pdf)(或风险)最小化等决策理论相结合时，后者可以用于正式评估不同决策的影响——包括做出提前结束实验的决定。
+
+# 支付
+
+支付团队认为，未来或现在的用户可以使用的支付方式(信用卡、借记卡、移动运营商计费等)不应该成为用户注册Netflix的障碍，也不应该成为用户离开Netflix的原因。会员和支付团队之间有许多接触点，我们在Netflix和新会员之间建立联系，通过续订来维持这种关系，(很遗憾!)当会员选择取消时，这种关系就结束了。
+
+我们在支付方式、认证体验、文本复制和UI设计等方面进行创新，并在其他任何地方为会员提供更顺畅的支付体验。在所有这些领域，我们都在本系列列出的测试原则的指导下，寻求提高决策的质量和速度。
+
+决策质量并不仅仅意味着告诉人们当p值(见第3部分)低于0.05时“发布!“。首先要有好的假设和清晰的决策框架——尤其是要在长期目标和务实的时间框架之间获得明智的平衡。我们没有无限的流量和时间，所以有时不得不做出艰难的选择。是否有度量指标可以更快产生信号？使用的代价是什么？调用这个测试的预期损失是多少？相对于运行其他测试的机会成本是多少？这些都是需要解决的有趣问题，我们一直在寻求改进。
+
+![](https://image.deepnomind.com/blog/image/cb141664f696f9658691bfcf3a015bef)
+
+我们还积极投资提高决策速度，经常与实验平台团队密切合作。在过去一年里，我们已经为三种更快的实验方法试点了模型和工作流程：[组顺序测试(GST)](https://netflixtechblog.com/improving-experimentation-efficiency-at-netflix-with-meta-analysis-and-optimal-stopping-d8ec290ae5be)、[高斯贝叶斯推理(Gaussian Bayesian Inference)](https://drive.google.com/file/d/11vKsMl_U8aUbaj3_TQ6Ewdc3iD0Ytpq_/view)和[自适应测试(Adaptive Testing)](https://papers.nips.cc/paper/2021/file/0ec04cb3912c4f08874dd03716f80df1-Paper.pdf)。这些技术中的任何一种都可以提高实验吞吐量，综合应用这些技术将改变Netflix支付实验速度的发展轨迹。
+
+# 合作伙伴
+
+我们希望所有会员无论何时和以何种方式访问Netflix都能享受高质量的体验，合作伙伴团队致力于确保Netflix应用程序和我们的最新技术集成到各种各样的消费产品中，并确保Netflix在所有这些设备上容易被使用。我们还与移动和付费电视运营商合作，推出捆绑服务，将Netflix的价值带给更多未来的会员。
+
+在合作伙伴领域，我们想要了解许多经验（如合作伙伴驱动的营销活动），并不适合本系列重点讨论的A/B测试框架。有时，用户会自己选择体验，或者新体验会同时向一大群用户推出。在这些分析中，数据科学家的一个关键角色是教育利益相关者这些研究的注意事项，同时仍然提供严格的评估和可操作的见解，并为一些其他方面不明确的问题提供框架。以下是这些分析中的一些挑战和机遇：
+
+**测试选择混淆（Treatment selection confounding）**。当用户自我选择进入测试或控制体验时(与第2部分中讨论的随机分配相对)，用户最终进入每种体验的概率可能取决于他们对Netflix的使用习惯。这些基线指标也与结果指标自然相关（例如会员满意度），因此混淆了观察测试对结果指标的影响。当测试选择或测试参与度随时间变化时，问题会加剧，这可能导致随时间变化的混淆。为了处理这些情况，我们使用反向倾向分数（inverse propensity scores）、双稳健估计（doubly robust estimators）、差异中的差异（difference-in-difference）或工具变量（instrumental variables）等方法来提取可操作的因果分析，并通过纵向分析来解释时间依赖性。
+
+**综合控制和结构模型（Synthetic controls and structural models）**。调整混淆性要求预处理协变量与响应变量具有相同的聚合水平。然而，有时我们无法从单个Netflix用户的角度获取这些信息，在这种情况下，我们使用合成控制(synthetic controls)和[结构模型(structural models)](https://netflixtechblog.com/key-challenges-with-quasi-experiments-at-netflix-89b4f234b852)来分析聚合级数据。
+
+![](https://image.deepnomind.com/blog/image/c8b1d5295325cac76a0f71991f1f42f1)
+
+**敏感性分析（Sensitivity analysis）**。在缺乏真正的A/B测试的情况下，我们的分析依赖于使用可用数据来调整测试和结果指标之间的虚假相关性，但我们能做到多少取决于现有的数据是否足以解释所有这些相关性。为了理解因果关系的有效性，我们进行了敏感性分析，以评估结果的稳健性。
+
+# 消息
+
+我们一直在寻找帮助会员选择对他们来说很棒的内容的方法，在Netflix产品上我们做到了这一点，为每位会员提供了[个性化](https://www.slideshare.net/justinbasilico/recent-trends-in-personalization-at-netflix)的体验。但是，是否可以通过其他方式帮助用户了解新的或相关的内容，以便他们在结束漫长的一天想放松的时候能看到一些很棒的东西呢？
+
+包括电子邮件和推送通知在内的消息推送是我们维护会员的重要方式之一。Netflix的消息团队努力为用户提供观看内容之外的乐趣。有什么最新消息或即将发布什么新内容？我们可以推荐什么完美的内容给你的“约会时间电影之夜”？作为消息团队，我们也注意到会员生活中的所有数字干扰，因此我们努力工作，希望在正确的时间将正确的信息发送给正确的会员。
+
+这一领域的数据科学家与产品经理和工程师密切合作，开发消息传递解决方案，帮助最大化会员长期满意度。我们一直致力于为会员提供更好、更个性化的消息体验。在给定历史数据的情况下，我们每天都会预测候选消息将如何满足会员的需求，系统的输出将告诉我们会员将会收到什么消息(如果有的话)。为了确保个性化消息传递方式的创新为会员带来更好的体验，我们使用A/B测试来学习和确认假设。
+
+![](https://image.deepnomind.com/blog/image/690cd4fab37e26fb7972a7f67fbc1929)
+
+作为Netflix的数据科学家，在消息领域工作非常令人兴奋，我们正在积极构建和使用复杂的学习模型，以帮助我们更好的为会员服务。这些基于[“bandits”](https://en.wikipedia.org/wiki/Multi-armed_bandit)的模型，不断了解更多会员信息偏好，不断应用这些知识从而让会员更满意。就像持续的A/B测试，不断地使用新的测试方法。这个框架允许我们执行许多令人兴奋和具有挑战性的分析，而不必每次都部署新的A/B测试。
+
+# 素材选择（Evidence Selection）
+
+当用户打开Netflix应用程序时，我们的目标是帮助他们选择适合他们的节目。做到这一点的一种方法是不断改进推荐系统，为每个成员提供个性化的主页体验。节目推荐之外，我们努力选择和呈现海报、图像和其他个性化的视觉元素，并帮助每个会员理解为什么某个特定的节目对他们来说是一个很好的选择——尤其对于新节目或者不熟悉系统的新会员来说。
+
+卓越的创造性和推荐选择系统的持续改进都是实现这一目标的关键。数据科学家在推荐领域使用在线实验和离线分析从而提供强有力的因果见解，有效帮助产品决策需要在主页上呈现的图像，并开发为用户提供推荐的模型。
+
+身处内容创建和产品开发的交叉点，数据科学家面临着一些独特的挑战：
+
+**预测素材的性能（Predicting evidence performance）**。假设我们正在开发一种产生推荐的新方法，理想情况下，我们希望在进行一项可能需要长时间才能获得回报的大型投资之前，能够对新方法的积极结果有一些感觉。数据科学家通过开发因果有效的预测模型来帮助投资决策。
+
+**将成员与最佳素材相匹配（Matching members with the best evidence）**。高质量和适当选择的素材是Netflix提供给所有会员的伟大经验。在我们测试和了解什么类型的素材最有效，以及如何将会员与最佳素材相匹配的同时，我们也致力于通过投资于A/B测试的有效方法，使我们能够迅速停止不理想的测试体验，从而最大限度减少潜在的负面影响。
+
+![](https://image.deepnomind.com/blog/image/c20631a3717afe80ef11454912cc88a3)
+
+**对素材开发提供及时的因果反馈（Providing timely causal feedback on evidence development）**。来自数据(包括A/B测试)的见解被广泛用于创造更好的节目、预告片和其他类型的推荐素材。除了A/B测试，我们还致力于开发实验设计和分析框架，提供细粒度的因果推理，并能够跟上我们的学习规模。我们使用[contextual bandits](https://netflixtechblog.com/artwork-personalization-c589f074ad76)，最小化会员与素材的匹配差距，通过与算法工程团队的合作，我们已经建立了记录反事实的能力：推荐什么会造成不同的选择？这些数据为我们提供了一个平台，可以运行丰富的离线实验，并得出因果推论，以应对挑战，并回答A/B测试可能需要很长时间才能得出结论的问题。
+
+# 流媒体
+
+假设你已经注册了Netflix，并发现了一些令人兴奋的内容，当按下播放键时，会发生什么呢？Netflix幕后的基础设施已经启动，将用最快捷的方式传递你选择的内容，并提供高质量的音频和视频。
+
+众多致力于提供高质量音视频的工程团队使用A/B测试来改善向全世界会员提供的体验。创新领域包括Netflix应用程序本身(跨越数千种设备)、[编码算法](https://netflixtechblog.com/bringing-av1-streaming-to-netflix-members-tvs-b7fc88e42320)，以及优化全球[Open Connect分布式网络](https://openconnect.netflix.com/en/)内容布局的方法。
+
+数据科学在这个业务领域中的角色强调大规模实验和支持工程团队的自主实验：如何使这些团队能够高效、自信的执行、分析和基于A/B测试做出决策？我们将讨论数据科学和工程团队之间的合作使这个领域受益的四种方式。
+
+**自动化（Automation）**。由于流式实验数量众多(每年数千次)且寿命较短，我们在工作流自动化方面进行了投资。例如，我们通过直接将实验平台的API与[Spinnaker](https://netflixtechblog.com/netflix-at-the-spinnaker-summit-2018-ac694692d007)部署管道集成，利用Netflix了不起的工具[安全部署Netflix客户端](https://netflixtechblog.com/safe-updates-of-client-applications-at-netflix-1d01c71a930c)。允许工程师使用单个配置文件来设置、分配和分析他们所做的更改的影响。在这个模型的进一步发展中，用户甚至可以通过运行多轮线性优化实验来实现“自动化”。
+
+**超越平均测试效果（Beyond average treatment effects）**。由于许多重要的流媒体音视频指标并不体现为正态分布，我们发现在平均测试效果之外进行研究是至关重要的。为了克服这些挑战，我们与实验平台合作，为压缩数据开发和集成[高性能分析方法](https://netflixtechblog.com/data-compression-for-large-scale-streaming-experimentation-c20bfab8b9ce)，从而即使是对于最差的指标，也能够快速估计测试效果的分布和分位数。[分位数可视化](https://netflixtechblog.com/streaming-video-experimentation-at-netflix-visualizing-practical-and-statistical-significance-7117420f4e9a)产生了对测试效果的新见解，这些图表现在作为我们自动报告的一部分，经常用于直接支持高级产品决策。
+
+**A/B测试的替代品（Alternatives to A/B testing）**。Open Connect工程团队面临许多测量挑战。拥塞会导致测试组和对照组之间产生[相互作用](https://arxiv.org/abs/2110.00118)，另外，由于拥塞控制算法的性质，我们无法随机化。为了应对这些挑战，我们在[准实验方法](https://netflixtechblog.com/quasi-experimentation-at-netflix-566b57d2e362)上投入了大量资金，使用[Metaflow](https://netflixtechblog.com/open-sourcing-metaflow-a-human-centric-framework-for-data-science-fa72e04a5d9)将现有的指标定义基础设施和来自实验平台的数据收集与基于差异中的差异(difference-in-difference)方法的自定义分析方法相匹配，这个工作流允许我们快速部署自助工具来度量传统A/B测试无法度量的变更。此外，模块化方法使得跨Open Connect用例扩展准实验变得容易，允许我们根据每个团队的特殊需求替换数据源或分析方法。
+
+![](https://image.deepnomind.com/blog/image/54fe5a25757db6a9030cad8ec299410c)
+
+**支持自定义指标和维度（Support for custom metrics and dimensions）**。最后，我们开发了一个(相对而言)无障碍的路径，允许所有的实验人员(不仅仅是数据科学家)在需要的时候快速创建自定义指标和维度。任何可以被记录的内容都可以快速传递到实验平台，我们在这个领域中考虑的所有测试的长期体验质量指标都可以进行分析和可视化。帮助我们的工程师可以平滑的提出和回答更精确的问题，可以花更少的时间考虑如何进行测试，有更多的时间尝试那些令人兴奋的想法。
+
+# 扩大实验规模，投资基础设施
+
+为了支持Netflix实验项目的规模和复杂性，我们投资建立了自己的实验平台(内部称为“XP”)。XP为实验的整个生命周期提供了健壮的和自动化(或半自动)的解决方案，从体验管理到分析，并满足大型测试的高吞吐量数据规模。
+
+![](https://image.deepnomind.com/blog/image/429ac8a6215387d6d60b5767636d0ddf)
+
+想了解更多关于Netflix实验平台XP的信息吗?[参考架构和分配策略](https://netflixtechblog.com/its-all-a-bout-testing-the-netflix-experimentation-platform-4e1ca458c15)，如何重新[构想实验](https://netflixtechblog.com/reimagining-experimentation-analysis-at-netflix-71356393af21)，[数学工程设计原则](https://netflixtechblog.com/design-principles-for-mathematical-engineering-in-experimentation-platform-15b3ea143b1f)，以及[如何利用计算因果推理](https://netflixtechblog.com/computational-causal-inference-at-netflix-293591691c62)来支持民主化平台上的创新和规模。
+
+XP提供了一个框架，允许工程团队在代码中定义测试处理经验集，然后使用这些来配置实验。平台随机选择会员(或其他我们可能进行实验的单位，如回放会话)分配给实验，随机将他们分配给每个实验中的一个体验(控制组或测试组)。然后，根据会员参加的测试以及这些测试中的变体，Netflix服务对XP的调用可以确保传递正确的体验。数据工程系统收集这些测试元数据，与核心数据集结合起来，记录会员和非会员如何与服务交互，记录流媒体视频传输的技术指标，等等。然后，这些数据通过自动分析管道传输，并在[ABlaze](https://netflixtechblog.com/its-all-a-bout-testing-the-netflix-experimentation-platform-4e1ca458c15)（Netflix报告和配置实验的前端）中报告。测试结果对公司的每个人都是开放的，而不仅仅是数据科学家和决策者，与[Netflix文化](https://jobs.netflix.com/culture)相一致。
+
+Netflix XP在执行目前的实验项目与着眼于未来的创新之间取得了平衡，XP的目标是采用任何能够扩展实验项目边界的改进，并将其变为明年一键式解决方案，这是一个良性飞轮。改进可能涉及为实验分配会员(或其他单元)，跟踪测试之间冲突的新方法，或基于实验设计、分析和决策的新方法。例如，XP在特性标记和经验交付方面与工程团队紧密合作。这些努力成功为Netflix开发者提供了无缝体验，将实验完全整合到软件开发生命周期中。
+
+为了分析实验，我们构建了既**民主化**又**模块化**的Netflix XP。**民主化**，我们指的是数据科学家(和其他用户)可以直接提供用于分析测试的指标、因果推理方法和可视化。使用这三个**模块**，实验人员可以根据他们的测试编写灵活的报告，这些报告可以通过我们的前端UI和支持临时和探索性分析的笔记本环境。
+
+这种模型支持快速原型和创新，我们将工程问题抽象出来，这样数据科学家就可以直接向生产实验平台贡献代码，而无需成为软件工程师。随着分析方法变得更加复杂和计算密集，为了确保平台能力能够支持所需的规模(测试的数量和规模)，我们已经投资开发了性能良好、健壮的[测试分析计算因果推理软件](https://netflixtechblog.com/computational-causal-inference-at-netflix-293591691c62)。
+
+![](https://image.deepnomind.com/blog/image/010cd1626b45d25ec2917d957ae0b592)
+
+建立实验平台需要一整个团队：软件工程师建立和维护后端工程基础设施，UI工程师负责搭建用于管理和分析实验的ABlaze前端，在因果推理和数值计算方面具有专业知识的数据科学家开发、实现、扩展和传播先进方法，用户体验设计师确保产品能够方便的被利益相关者访问，产品经理保证平台朝着正确的方向创新。这是一个令人难以置信的多学科努力的结果，XP提供了开发跨学科的广泛技能的机会。由于实验在Netflix是如此普遍，那些XP的工作人员面临大量挑战，并与来自Netflix各个团队的同事合作。这是一个从不同角度广泛了解“Netflix如何运作”的好方法。
+
+# 总结
+
+在Netflix，我们投资数据科学团队，他们使用A/B测试、其他实验范式和更广泛的科学方法，支持Netflix为当前和未来的会员提供持续的产品创新。同时，我们投资建立了内部实验平台(XP)，以支持实验和学习项目的规模和复杂性。
+
+实际上这两项投资之间的分界线是模糊的，我们鼓励XP和面向业务的数据科学家之间的合作（包括通过如A/B实验研讨会和因果推论峰会这样的内部活动）。为了确保Netflix的实验能力不断发展，以满足实验从业者的实际需求，我们有意确保开发新的测量和实验管理能力，以及新的软件系统，以实现和扩大研究。此外，我们特意推动的合作方式为人们提供了很好的机会来领导和贡献高影响力的项目，交付新的功能，跨越工程、度量和内部产品开发。由于实验对Netflix的战略价值，这些合作努力得到了包括高管在内的广泛关注。
+
+到目前为止，本系列已经涵盖了A/B测试的原因、内容和方式，所有这些都是获得基于实验的产品开发方法的优势所必需的。但如果没有一点魔法，这些基本的东西仍然不够，这种魔法将是本系列的下一篇也是最后一篇文章的焦点：弥漫于Netflix的学习和实验文化。
+
+> 你好，我是俞凡，在Motorola做过研发，现在在Mavenir做技术工作，对通信、网络、后端架构、云原生、DevOps、CICD、区块链、AI等技术始终保持着浓厚的兴趣，平时喜欢阅读、思考，相信持续学习、终身成长，欢迎一起交流学习。  
+> 微信公众号：DeepNoMind
