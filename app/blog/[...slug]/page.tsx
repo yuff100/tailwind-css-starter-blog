@@ -56,7 +56,7 @@ export async function generateMetadata(props: {
       title: post.title,
       description: post.summary,
       siteName: siteMetadata.title,
-      locale: 'en_US',
+      locale: 'zh_CN',
       type: 'article',
       publishedTime: publishedAt,
       modifiedTime: modifiedAt,
@@ -98,11 +98,42 @@ export default async function Page(props: { params: Promise<{ slug: string[] }> 
   const mainContent = coreContent(post)
   const jsonLd = post.structuredData
   jsonLd['author'] = authorDetails.map((author) => {
+    const sameAs = [author.github, author.twitter, author.linkedin].filter(Boolean)
     return {
       '@type': 'Person',
       name: author.name,
+      url: `${siteMetadata.siteUrl}/about`,
+      ...(sameAs.length > 0 ? { sameAs } : {}),
     }
   })
+  if (Array.isArray(post.tags) && post.tags.length > 0) {
+    jsonLd['keywords'] = post.tags.join(', ')
+  }
+
+  const breadcrumbLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: '首页',
+        item: siteMetadata.siteUrl,
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: '博客',
+        item: `${siteMetadata.siteUrl}/blog`,
+      },
+      {
+        '@type': 'ListItem',
+        position: 3,
+        name: post.title,
+        item: `${siteMetadata.siteUrl}/${post.path}`,
+      },
+    ],
+  }
 
   const Layout = layouts[post.layout || defaultLayout]
 
@@ -111,6 +142,10 @@ export default async function Page(props: { params: Promise<{ slug: string[] }> 
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd) }}
       />
       <Layout content={mainContent} authorDetails={authorDetails} next={next} prev={prev}>
         <MDXLayoutRenderer code={post.body.code} components={components} toc={post.toc} />
