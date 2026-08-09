@@ -65,8 +65,13 @@ const projectsData: Project[] = [
     description: '无服务器架构的股市行情系统。',
     imgSrc: '/static/images/open-stock.png',
     href: 'https://open-stock.deepnomind.com/',
+  },
+  {
+    title: '天雅外贸独立站',
+    description: '天雅吉康绿色健康产业外贸独立站。',
+    imgSrc: '/static/images/tianya.png',
+    href: 'https://www.tianyaherb.com/',
   }
-
 ]
 
 export default projectsData
