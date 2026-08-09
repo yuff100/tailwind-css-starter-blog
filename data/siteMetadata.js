@@ -1,9 +1,9 @@
 /** @type {import("pliny/config").PlinyConfig } */
 const siteMetadata = {
-  title: 'DeepNoMind 官方网站',
+  title: 'DeepNoMind',
   author: '俞凡',
   headerTitle: 'DeepNoMind 官方网站',
-  description: 'DeepNoMind 官方网站',
+  description: '俞凡的技术博客，专注于 AI 智能体、系统架构、软件工程和 DevOps 的深度分享，涵盖前端、后端、微服务等前沿技术的实战经验。',
   language: 'zh-CN',
   theme: 'system', // system, dark or light
   siteUrl: 'https://www.deepnomind.com',
